@@ -66,6 +66,71 @@ button{font-family:inherit;cursor:pointer;}
 ::-webkit-scrollbar-track{background:transparent;}
 
 /* ============================================================
+   SIGN-IN GATE
+   ============================================================ */
+#setup{
+  min-height:100vh;
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;
+  background:radial-gradient(ellipse at top, rgba(232,130,58,0.08), transparent 60%), var(--bg);
+}
+.setup-box{
+  width:100%;max-width:400px;
+  background:var(--bg-elevated);
+  border:1px solid var(--border-soft);
+  border-radius:var(--radius-lg);
+  padding:32px 28px;
+}
+.setup-logo{text-align:center;margin-bottom:28px;}
+.setup-logo i{font-size:36px;color:var(--accent);}
+.setup-logo h1{font-size:22px;line-height:1.25;margin:10px 0 6px;}
+.setup-logo p{color:var(--text-faint);font-size:12.5px;margin:0;}
+.fg{margin-bottom:16px;}
+.fg label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;}
+.fg input{
+  width:100%;padding:10px 14px;
+  border-radius:var(--radius-md);
+  border:1px solid var(--border);
+  background:var(--bg-panel);
+  color:var(--text);
+  font-size:14px;
+}
+.fg input:focus{outline:none;border-color:var(--accent-dim);}
+.btn-load{
+  width:100%;padding:11px;
+  background:var(--accent);
+  color:#1a0f05;
+  border:none;border-radius:var(--radius-md);
+  font-weight:700;font-size:14px;
+  margin-bottom:8px;
+}
+.btn-load:hover{background:var(--accent-dim);}
+.btn-guest{
+  width:100%;padding:9px;
+  background:transparent;
+  color:var(--text-faint);
+  border:1px solid var(--border);
+  border-radius:var(--radius-md);
+  font-size:12.5px;
+}
+.btn-guest:hover{color:var(--text-dim);border-color:var(--text-faint);}
+#setup-status{
+  font-size:12.5px;
+  color:var(--text-dim);
+  text-align:center;
+  margin-top:14px;
+  min-height:16px;
+}
+#setup-status.error{color:var(--bad);}
+.prog-track{
+  height:4px;border-radius:2px;
+  background:var(--bg-panel);
+  overflow:hidden;
+  margin-top:6px;
+}
+.prog-fill{height:100%;width:0%;background:var(--accent);transition:width .25s ease;}
+
+/* ============================================================
    LAYOUT SHELL
    ============================================================ */
 #app{display:flex;min-height:100vh;}
@@ -293,7 +358,26 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
 </head>
 <body>
 
-<div id="app">
+<!-- ===================== SIGN-IN GATE ===================== -->
+<div id="setup">
+  <div class="setup-box">
+    <div class="setup-logo">
+      <i class="ti ti-ball-basketball"></i>
+      <h1>Docile Basketball<br>Fellowship</h1>
+      <p>Seven seasons. One place. All the records.</p>
+    </div>
+    <div class="fg">
+      <label for="inp-user">Your Sleeper username</label>
+      <input id="inp-user" placeholder="e.g. Goodmjim" autocomplete="off">
+    </div>
+    <button class="btn-load" id="btn-load" onclick="startArchiveLoad()">Enter the Archive →</button>
+    <button class="btn-guest" onclick="startArchiveLoad(true)">Continue without a username</button>
+    <div id="setup-status"></div>
+    <div class="prog-track" id="prog-track"><div class="prog-fill" id="prog-fill"></div></div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
   <!-- ===================== DESKTOP SIDEBAR ===================== -->
   <nav id="sidebar">
     <div class="brand">
@@ -311,71 +395,7 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
       </div>
     </div>
 
-    <div id="content">
-      <div id="panel-home" class="panel">
-        <div class="panel-header">
-          <h1>Home</h1>
-          <div class="desc">League overview, current standings, and recent activity.</div>
-        </div>
-        <div id="home-body"></div>
-      </div>
-
-      <div id="panel-myteam" class="panel">
-        <div class="panel-header">
-          <h1>My Team</h1>
-          <div class="desc">Roster, lineup history, and manager stats.</div>
-        </div>
-        <div id="myteam-body"></div>
-      </div>
-
-      <div id="panel-league" class="panel">
-        <div class="panel-header">
-          <h1>League</h1>
-          <div class="desc">Standings, draft history, and Fellowship-wide records.</div>
-        </div>
-        <div id="league-body"></div>
-      </div>
-
-      <div id="panel-players" class="panel">
-        <div class="panel-header">
-          <h1>Player Scoring</h1>
-          <div class="desc">Points scored while in a starting lineup slot only — bench points never count. Regular season only.</div>
-        </div>
-        <div id="players-body"></div>
-      </div>
-
-      <div id="panel-draft" class="panel">
-        <div class="panel-header">
-          <h1>Draft History</h1>
-          <div class="desc">Every pick, every season.</div>
-        </div>
-        <div id="draft-body"></div>
-      </div>
-
-      <div id="panel-alldocile" class="panel">
-        <div class="panel-header">
-          <h1>All-Docile &amp; All-Rookie Teams</h1>
-          <div class="desc">Season honor teams built from starting-lineup scoring only.</div>
-        </div>
-        <div id="alldocile-body"></div>
-      </div>
-
-      <div id="panel-awards" class="panel">
-        <div class="panel-header">
-          <h1>POTG / POTW</h1>
-          <div class="desc">Player of the Game and Player of the Week, regular season only.</div>
-        </div>
-        <div id="awards-body"></div>
-      </div>
-
-      <div id="panel-search" class="panel">
-        <div class="panel-header">
-          <h1>Player Search</h1>
-          <div class="desc">Find any player who has appeared in the Fellowship.</div>
-        </div>
-        <div id="search-body"></div>
-      </div>
-    </div>
+    <div id="content"></div>
   </div>
 </div>
 
@@ -775,20 +795,57 @@ function renderEligibilityTimeline(pid){
 }
 
 /* ============================================================
-   NAV / SECTIONS
+   NAV — grouped sidebar sections matching the full site IA.
+   `ready:true` pages have working render functions wired below;
+   `ready:false` pages get an automatic "coming in a later phase" placeholder
+   (see renderComingSoon) until their phase is built.
    ============================================================ */
-const SECTIONS = {
-  home:    {label:'Home',    icon:'ti-home',            panel:'home'},
-  myteam:  {label:'My Team', icon:'ti-shirt-sport',     panel:'myteam'},
-  league:  {label:'League',  icon:'ti-trophy',          panel:'league'},
-  players: {label:'Players', icon:'ti-chart-bar',       panel:'players'},
-  draft:   {label:'Draft',   icon:'ti-clipboard-list',  panel:'draft'},
-  alldocile:{label:'Honors', icon:'ti-medal',           panel:'alldocile'},
-  awards:  {label:'POTG/POTW', icon:'ti-flame',         panel:'awards'},
-  search:  {label:'Search',  icon:'ti-search',          panel:'search'}
-};
-// Order shown in nav (bottom nav shows a max of 5 primary + rest folded conceptually; kept flat here)
-const NAV_ORDER = ['home','myteam','league','players','draft','alldocile','awards','search'];
+const NAV_GROUPS = [
+  {
+    key:'home', label:'Home', icon:'ti-home',
+    pages:[
+      {key:'dashboard', label:'Dashboard',      icon:'ti-layout-dashboard', desc:'League overview, current standings, and recent activity.', ready:true},
+      {key:'recap',     label:'Weekly Recap',   icon:'ti-notebook',         desc:'A week-by-week narrative recap of the season.', ready:false},
+      {key:'tutorial',  label:'Archive Tutorial', icon:'ti-book-2',         desc:'A quick tour of everything the archive can show you.', ready:false}
+    ]
+  },
+  {
+    key:'myteam', label:'My Team', icon:'ti-shirt-sport',
+    pages:[
+      {key:'myscoring',  label:'My Scoring',       icon:'ti-target-arrow',     desc:'Every player you\u2019ve started, ranked by points, starts, average, or best game.', ready:false},
+      {key:'mytimeline', label:'My Timeline',      icon:'ti-history',          desc:'Year-by-year record, finish, PF/PA, team name, and trophy history.', ready:true},
+      {key:'myh2h',      label:'My H2H',           icon:'ti-versus',           desc:'Your all-time record against every other manager.', ready:false},
+      {key:'mydraft',    label:'My Draft',         icon:'ti-clipboard-list',   desc:'Every rookie pick you\u2019ve made, with points scored for your team.', ready:false},
+      {key:'mytrades',   label:'My Trades',        icon:'ti-arrows-exchange',  desc:'All trades involving your roster across loaded seasons.', ready:false},
+      {key:'mylineup',   label:'All-Time Lineup',  icon:'ti-crown',            desc:'Your best-ever starting lineup across every season you\u2019ve played.', ready:false},
+      {key:'mynba',      label:'My NBA Breakdown', icon:'ti-building-stadium', desc:'How often you\u2019ve started players from each NBA franchise.', ready:false}
+    ]
+  },
+  {
+    key:'league', label:'League', icon:'ti-trophy',
+    pages:[
+      {key:'playerscoring', label:'Player Scoring', icon:'ti-chart-bar',       desc:'Points scored while in a starting lineup slot only \u2014 bench points never count. Regular season only.', ready:true},
+      {key:'playergraphs',  label:'Player Graphs',  icon:'ti-chart-scatter',   desc:'Plot any two player stats against each other across the league.', ready:false},
+      {key:'leaguetimeline',label:'Timeline',        icon:'ti-timeline',       desc:'The Fellowship\u2019s history, season by season.', ready:false},
+      {key:'standings',     label:'Standings',       icon:'ti-list-numbers',   desc:'Full league standings, records, and title counts.', ready:true},
+      {key:'leagueh2h',     label:'H2H',             icon:'ti-versus',         desc:'Head-to-head records between every pair of managers.', ready:false},
+      {key:'draft',         label:'Draft',           icon:'ti-clipboard-list', desc:'Every pick, every season, including the 2020 startup draft.', ready:true},
+      {key:'trades',        label:'Trades',          icon:'ti-arrows-exchange',desc:'Every trade in Fellowship history.', ready:false},
+      {key:'awards',        label:'Awards',          icon:'ti-medal',          desc:'Season honor teams built from starting-lineup scoring only.', ready:true},
+      {key:'potg',          label:'POTG',            icon:'ti-flame',          desc:'Player of the Game and Player of the Week, regular season only.', ready:true},
+      {key:'projections',   label:'Projections',     icon:'ti-target',         desc:'Weekly projected points, where Sleeper provides them.', ready:false},
+      {key:'playoffs',      label:'Playoffs',        icon:'ti-tournament',     desc:'Every playoff matchup by year, and all-time playoff standings.', ready:false},
+      {key:'matchups',      label:'Matchups',        icon:'ti-calendar-event', desc:'Every matchup in Fellowship history, regular season and playoffs.', ready:false}
+    ]
+  }
+];
+// Smart Search sits outside the grouped sections, below a divider (matches football's layout)
+const SEARCH_PAGE = {key:'search', label:'Smart Search', icon:'ti-search', desc:'Find any player who has appeared in the Fellowship.', ready:true};
+
+// Flat lookup of every page by key, built once, used for routing/panel generation
+const PAGES = {};
+NAV_GROUPS.forEach(g => g.pages.forEach(p => { PAGES[p.key] = {...p, group:g.key}; }));
+PAGES[SEARCH_PAGE.key] = {...SEARCH_PAGE, group:null};
 
 /* ============================================================
    DATA LOADING
@@ -982,6 +1039,8 @@ function lookupPid(name){
 const DB = {
   currentSeason: CURRENT_SEASON,
   selectedSeason: null,          // season the UI is currently browsing (defaults to latest completed)
+  myUsername: null,              // raw Sleeper username as entered at sign-in
+  myManagerKey: null,            // resolved MANAGERS key, or null if unrecognized / guest mode
   seasons: {},                   // DB.seasons[year] = { league, rosters, users, teams, matchupsByWeek, playoffWeekStart }
   allStarters: [],               // FLAT array (mirrors football archive): {pid, week, year, points, teamRosterId, teamName, managerKey}
   playerMeta: {},                // DB.playerMeta[pid] = { name, teamAbbr, positionsBySeasonYear:{year:[...]}, ... }
@@ -1001,24 +1060,50 @@ const DB = {
 /* ============================================================
    NAVIGATION
    ============================================================ */
+let currentPageKey = null;
+let activeBottomGroup = null;
+
 function renderSidebarNav(){
   const el = document.getElementById('sidebar-nav');
-  el.innerHTML = `<div class="nav-section">
-    <div class="nav-label">Fellowship</div>
-    ${NAV_ORDER.map(key => `
-      <div class="nav-item" data-nav="${key}" onclick="switchTab('${key}')">
-        <i class="ti ${SECTIONS[key].icon}"></i>${SECTIONS[key].label}
-      </div>`).join('')}
-  </div>`;
+  el.innerHTML = NAV_GROUPS.map(g => `
+    <div class="nav-section">
+      <div class="nav-label">${g.label}</div>
+      ${g.pages.map(p => `
+        <div class="nav-item" data-nav="${p.key}" onclick="switchTab('${p.key}')">
+          <i class="ti ${p.icon}"></i>${p.label}${p.ready ? '' : '<span style="margin-left:auto;color:var(--text-faint);font-size:10px;">soon</span>'}
+        </div>`).join('')}
+    </div>`).join('') + `
+    <div class="nav-section" style="border-top:1px solid var(--border-soft);margin-top:6px;padding-top:14px;">
+      <div class="nav-item" data-nav="${SEARCH_PAGE.key}" onclick="switchTab('${SEARCH_PAGE.key}')">
+        <i class="ti ${SEARCH_PAGE.icon}"></i>${SEARCH_PAGE.label}
+      </div>
+    </div>`;
 }
 
 function renderBottomNav(){
-  const primary = ['home','myteam','league','players','search'];
   const el = document.getElementById('bn-main');
-  el.innerHTML = primary.map(key => `
-    <div class="bn-item" data-nav="${key}" onclick="switchTab('${key}')">
-      <i class="ti ${SECTIONS[key].icon}"></i><span>${SECTIONS[key].label}</span>
-    </div>`).join('');
+  el.innerHTML = NAV_GROUPS.map(g => `
+    <div class="bn-item" data-navgroup="${g.key}" onclick="onBottomGroupTap('${g.key}')">
+      <i class="ti ${g.icon}"></i><span>${g.label}</span>
+    </div>`).join('') + `
+    <div class="bn-item" data-nav="${SEARCH_PAGE.key}" onclick="switchTab('${SEARCH_PAGE.key}')">
+      <i class="ti ${SEARCH_PAGE.icon}"></i><span>${SEARCH_PAGE.label}</span>
+    </div>`;
+}
+
+function onBottomGroupTap(groupKey){
+  activeBottomGroup = groupKey;
+  const group = NAV_GROUPS.find(g => g.key === groupKey);
+  if(group && group.pages.length) switchTab(group.pages[0].key);
+}
+
+function renderBottomSubrow(){
+  const el = document.getElementById('bn-subrow');
+  const group = NAV_GROUPS.find(g => g.key === activeBottomGroup);
+  if(!group){ el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = 'flex';
+  el.innerHTML = group.pages.map(p => `
+    <div class="yr-chip ${p.key===currentPageKey?'active':''}" data-nav="${p.key}" onclick="switchTab('${p.key}')">${p.label}</div>`).join('');
 }
 
 function renderYearChips(containerId, onSelect, selectedYear){
@@ -1036,23 +1121,61 @@ function renderYearChips(containerId, onSelect, selectedYear){
   });
 }
 
+// Maps a page key to its render function. Only pages marked ready:true in NAV_GROUPS
+// need an entry here — not-ready pages already show a static "coming soon" placeholder
+// baked into their panel by renderContentShell(), so there's nothing to dispatch to.
+const RENDER_FNS = {
+  dashboard: renderDashboard,
+  mytimeline: renderMyTimeline,
+  playerscoring: renderPlayersPanel,
+  standings: renderStandings,
+  draft: renderDraft,
+  awards: renderAwardsPanel,
+  potg: renderPotgPanel,
+  search: renderSearch
+};
+
 function switchTab(name){
-  Object.keys(SECTIONS).forEach(key => {
-    document.getElementById(`panel-${SECTIONS[key].panel}`).classList.toggle('active', key===name);
+  const page = PAGES[name];
+  if(!page) return;
+  currentPageKey = name;
+
+  document.querySelectorAll('.panel').forEach(panelEl => {
+    panelEl.classList.toggle('active', panelEl.id === `panel-${name}`);
   });
   document.querySelectorAll('[data-nav]').forEach(navEl => {
     navEl.classList.toggle('active', navEl.dataset.nav === name);
   });
+  document.querySelectorAll('[data-navgroup]').forEach(navEl => {
+    navEl.classList.toggle('active', navEl.dataset.navgroup === page.group);
+  });
 
-  // lazy render on tab switch
-  if(name==='home') renderHome();
-  if(name==='myteam') renderMyTeam();
-  if(name==='league') renderLeague();
-  if(name==='players') renderPlayersPanel();
-  if(name==='draft') renderDraft();
-  if(name==='alldocile') renderAllDocilePanel();
-  if(name==='awards') renderAwardsPanel();
-  if(name==='search') renderSearch();
+  if(page.group){ activeBottomGroup = page.group; }
+  renderBottomSubrow();
+
+  if(RENDER_FNS[name]) RENDER_FNS[name]();
+}
+
+/* ============================================================
+   CONTENT SHELL — panel divs are generated from NAV_GROUPS/PAGES rather
+   than hand-written per page, so adding a page in a later phase is a
+   one-line addition to NAV_GROUPS, not a parallel HTML edit.
+   ============================================================ */
+function comingSoonHTML(page){
+  return `<div class="empty-state"><i class="ti ti-hammer"></i>${page.label} is coming in a later build phase.</div>`;
+}
+
+function renderContentShell(){
+  const el = document.getElementById('content');
+  const allPages = [...NAV_GROUPS.flatMap(g => g.pages), SEARCH_PAGE];
+  el.innerHTML = allPages.map(p => `
+    <div id="panel-${p.key}" class="panel">
+      <div class="panel-header">
+        <h1>${p.label}</h1>
+        <div class="desc">${p.desc}</div>
+      </div>
+      <div id="${p.key}-body">${p.ready ? '' : comingSoonHTML(p)}</div>
+    </div>`).join('');
 }
 
 /* ============================================================
@@ -1067,16 +1190,18 @@ function destroyAllCharts(){
 function renderAll(){
   destroyAllCharts();
   DB.selectedSeason = DB.selectedSeason || (CURRENT_SEASON - 1); // default to latest completed season
+  renderContentShell();
   renderSidebarNav();
   renderBottomNav();
-  switchTab('home');
+  switchTab('dashboard');
 }
+
 
 /* ============================================================
    PANEL RENDERERS
    ============================================================ */
-function renderHome(){
-  const el = document.getElementById('home-body');
+function renderDashboard(){
+  const el = document.getElementById('dashboard-body');
   const year = DB.selectedSeason;
   const champ = FINAL_STANDINGS[year];
   el.innerHTML = `
@@ -1096,25 +1221,27 @@ function renderHome(){
         <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">Active since ${seasonLabel(FIRST_SEASON)}</div>
       </div>
     </div>
-    <div id="home-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 14px;"></div>
-    <div class="empty-state"><i class="ti ti-plug-connected"></i>Connect the Cloudflare Worker (CF_WORKER_URL) and load season data to populate recent activity, standings, and matchup recaps here.</div>
+    <div id="dashboard-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 14px;"></div>
+    <div class="empty-state"><i class="ti ti-sparkles"></i>Automated insights, recent activity, and matchup recaps arrive in Phase 1.</div>
   `;
-  renderYearChips('home-yr-chips', (y)=>{ DB.selectedSeason = y; renderHome(); }, year);
+  renderYearChips('dashboard-yr-chips', (y)=>{ DB.selectedSeason = y; renderDashboard(); }, year);
 }
 
-function renderMyTeam(){
-  const el = document.getElementById('myteam-body');
+function renderMyTimeline(){
+  const el = document.getElementById('mytimeline-body');
   el.innerHTML = `
     <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;">
       ${Object.keys(MANAGERS).sort((a,b)=>MANAGERS[a].name.localeCompare(MANAGERS[b].name)).map(k => `
-        <div class="yr-chip" onclick="renderMyTeamFor('${k}')">${MANAGERS[k].name}</div>`).join('')}
+        <div class="yr-chip ${k===DB.myManagerKey?'active':''}" onclick="renderMyTimelineFor('${k}')">${MANAGERS[k].name}</div>`).join('')}
     </div>
-    <div id="myteam-detail" class="empty-state"><i class="ti ti-user-search"></i>Select a manager to view roster history.</div>
+    <div id="mytimeline-detail" class="empty-state"><i class="ti ti-user-search"></i>Select a manager to view roster history.</div>
   `;
+  // Auto-route to the signed-in manager, if we recognized one at sign-in
+  if(DB.myManagerKey) renderMyTimelineFor(DB.myManagerKey);
 }
 
-function renderMyTeamFor(managerKey){
-  const el = document.getElementById('myteam-detail');
+function renderMyTimelineFor(managerKey){
+  const el = document.getElementById('mytimeline-detail');
   const m = getManager(managerKey);
   if(!m){ el.innerHTML = `<div class="empty-state">Unknown manager.</div>`; return; }
   const years = m.years;
@@ -1132,12 +1259,13 @@ function renderMyTeamFor(managerKey){
           </tr>`).join('')}
         </tbody>
       </table>
+      <div style="color:var(--text-faint);font-size:11.5px;margin-top:10px;">Record, PF/PA, and order of finish per season arrive in Phase 2.</div>
     </div>
   `;
 }
 
-function renderLeague(){
-  const el = document.getElementById('league-body');
+function renderStandings(){
+  const el = document.getElementById('standings-body');
   const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
   el.innerHTML = `
     <div class="card">
@@ -1152,6 +1280,7 @@ function renderLeague(){
           </tr>`).join('')}
         </tbody>
       </table>
+      <div style="color:var(--text-faint);font-size:11.5px;margin-top:10px;">Full standings with wins/losses, PF/PA, and title counts arrive in Phase 3.</div>
     </div>
   `;
 }
@@ -1171,7 +1300,7 @@ function sortPlayersTable(col){
 }
 
 function renderPlayersPanel(){
-  const el = document.getElementById('players-body');
+  const el = document.getElementById('playerscoring-body');
   el.innerHTML = `
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
       <input id="players-search" type="text" placeholder="Search players..."
@@ -1299,17 +1428,17 @@ function renderHonorsRoster(roster, year){
   </table>`;
 }
 
-function renderAllDocilePanel(){
-  const el = document.getElementById('alldocile-body');
+function renderAwardsPanel(){
+  const el = document.getElementById('awards-body');
   el.innerHTML = `
-    <div id="honors-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
-    <div id="honors-detail" class="empty-state"><i class="ti ti-medal"></i>Build honors for a season (buildHonorsForYear) to populate All-Docile / All-Rookie teams.</div>
+    <div id="awards-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="awards-detail" class="empty-state"><i class="ti ti-medal"></i>Build honors for a season (buildHonorsForYear) to populate All-Docile / All-Rookie teams.</div>
   `;
-  renderYearChips('honors-yr-chips', (y)=>{ renderHonorsFor(y); }, DB.selectedSeason);
+  renderYearChips('awards-yr-chips', (y)=>{ renderAwardsFor(y); }, DB.selectedSeason);
 }
 
-function renderHonorsFor(year){
-  const el = document.getElementById('honors-detail');
+function renderAwardsFor(year){
+  const el = document.getElementById('awards-detail');
   const docile = DB.awards.allDocile[year];
   const rookie = DB.awards.allRookie[year];
   if(!docile){ el.innerHTML = `<div class="empty-state"><i class="ti ti-medal"></i>No honors data built for ${seasonLabel(year)} yet.</div>`; return; }
@@ -1325,17 +1454,17 @@ function renderHonorsFor(year){
   `;
 }
 
-function renderAwardsPanel(){
-  const el = document.getElementById('awards-body');
+function renderPotgPanel(){
+  const el = document.getElementById('potg-body');
   el.innerHTML = `
-    <div id="awards-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
-    <div id="awards-detail" class="empty-state"><i class="ti ti-flame"></i>Build honors for a season to populate weekly POTG/POTW.</div>
+    <div id="potg-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="potg-detail" class="empty-state"><i class="ti ti-flame"></i>Build honors for a season to populate weekly POTG/POTW.</div>
   `;
-  renderYearChips('awards-yr-chips', (y)=>{ renderAwardsFor(y); }, DB.selectedSeason);
+  renderYearChips('potg-yr-chips', (y)=>{ renderPotgFor(y); }, DB.selectedSeason);
 }
 
-function renderAwardsFor(year){
-  const el = document.getElementById('awards-detail');
+function renderPotgFor(year){
+  const el = document.getElementById('potg-detail');
   const log = computePotgData(year);
   if(!log.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-flame"></i>No award data for ${seasonLabel(year)} yet.</div>`; return; }
 
@@ -1408,37 +1537,94 @@ document.getElementById('modal-overlay').addEventListener('click', (e) => {
 });
 
 /* ============================================================
-   INIT
+   SIGN-IN / MANAGER ROUTING
+   Matches the entered username against the known MANAGERS roster
+   (case-insensitive, resolving known aliases like GelEBeans -> CarlCanary)
+   rather than hitting Sleeper's /user endpoint — this is a closed
+   12-person league, so membership in our own roster IS the identity
+   check that matters here, and it costs zero extra API calls.
    ============================================================ */
-async function init(){
-  renderAll(); // render shell immediately so nav is usable while data loads
+function resolveManagerFromUsername(rawUsername){
+  if(!rawUsername) return null;
+  const lower = rawUsername.toLowerCase();
+  const directKey = Object.keys(MANAGERS).find(k => k.toLowerCase() === lower);
+  if(directKey) return directKey;
+  const aliasKey = Object.keys(USERNAME_ALIASES).find(k => k.toLowerCase() === lower);
+  if(aliasKey) return USERNAME_ALIASES[aliasKey];
+  return null;
+}
+
+function setSetupStatus(msg, isError=false){
+  const el = document.getElementById('setup-status');
+  el.textContent = msg;
+  el.classList.toggle('error', isError);
+}
+function setSetupProgress(pct){
+  document.getElementById('prog-fill').style.width = `${pct}%`;
+}
+
+async function startArchiveLoad(guest=false){
+  const btn = document.getElementById('btn-load');
+  const username = guest ? '' : document.getElementById('inp-user').value.trim();
 
   if(CF_WORKER_URL.includes('YOUR-WORKER')){
-    console.warn('CF_WORKER_URL is still a placeholder — set it to your deployed Cloudflare Worker before loading live data.');
+    setSetupStatus('CF_WORKER_URL is still a placeholder — set it to your deployed Cloudflare Worker.', true);
     return;
   }
 
+  btn.disabled = true;
+  DB.myUsername = username || null;
+  DB.myManagerKey = username ? resolveManagerFromUsername(username) : null;
+
+  if(username && !DB.myManagerKey){
+    setSetupStatus(`"${username}" isn't a recognized Fellowship manager — continuing without My Team personalization.`);
+  } else {
+    setSetupStatus('Loading the archive…');
+  }
+  setSetupProgress(5);
+
   try{
-    await loadAllSeasons();
-    await loadPlayerPool();
-    buildPlayerNameMap();
-    await loadAllDraftPicks();
-    await loadStartupDraft();
-
-    const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
-    for(const y of years){
-      await loadSeasonScoring(y);
-      buildHonorsForYear(y);
-    }
-
+    await loadAllData((pct, msg) => { setSetupProgress(pct); if(msg) setSetupStatus(msg); });
     DB.loaded = true;
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display = 'flex';
     renderAll();
   }catch(e){
     console.error('Data load failed:', e);
+    setSetupStatus('Error loading the archive: ' + e.message, true);
+    btn.disabled = false;
   }
 }
 
-document.addEventListener('DOMContentLoaded', init);
+// The actual Sleeper data pipeline, extracted from the old init() so it can report
+// progress back to the sign-in screen. onProgress(pct, message) fires at each major step.
+async function loadAllData(onProgress = () => {}){
+  onProgress(10, 'Loading season data…');
+  await loadAllSeasons();
+
+  onProgress(30, 'Loading player pool…');
+  await loadPlayerPool();
+  buildPlayerNameMap();
+
+  onProgress(50, 'Loading draft picks…');
+  await loadAllDraftPicks();
+  await loadStartupDraft();
+
+  const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
+  for(let i=0; i<years.length; i++){
+    const y = years[i];
+    onProgress(55 + Math.round((i/years.length)*40), `Loading ${seasonLabel(y)} scoring… (${i+1}/${years.length})`);
+    await loadSeasonScoring(y);
+    buildHonorsForYear(y);
+  }
+  onProgress(100, '');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('inp-user').addEventListener('keydown', (e) => {
+    if(e.key === 'Enter') startArchiveLoad();
+  });
+});
 </script>
 </body>
 </html>
