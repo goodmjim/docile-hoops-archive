@@ -336,6 +336,14 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
         <div id="league-body"></div>
       </div>
 
+      <div id="panel-players" class="panel">
+        <div class="panel-header">
+          <h1>Player Scoring</h1>
+          <div class="desc">Points scored while in a starting lineup slot only — bench points never count. Regular season only.</div>
+        </div>
+        <div id="players-body"></div>
+      </div>
+
       <div id="panel-draft" class="panel">
         <div class="panel-header">
           <h1>Draft History</h1>
@@ -508,103 +516,77 @@ const FINAL_STANDINGS = {
 };
 
 /* ============================================================
-   LINEUP SCORING EXTRACTION
-   Critical constraint: we track points scored WHILE IN A STARTING LINEUP SLOT,
-   never total fantasy points scored across the season, and NEVER playoff weeks.
-   Sleeper's "starters_points" array is aligned index-for-index with "starters",
-   and slot order follows the league's own roster_positions (non-bench) — we map
-   against that rather than assuming LINEUP_SLOTS in case a season's order differs.
-   ============================================================ */
-function getStartingSlotOrder(season){
-  const rp = (season.league.roster_positions || []).filter(p => TRUE_POSITIONS.includes(p) || ['G','F','UTIL'].includes(p));
-  return rp.length ? rp : LINEUP_SLOTS;
-}
-
-function buildWeeklyLineupScores(year){
-  const season = DB.seasons[year];
-  if(!season) return;
-  const slotOrder = getStartingSlotOrder(season);
-  DB.allStarters[year] = {};
-
-  Object.keys(season.matchupsByWeek).forEach(weekStr => {
-    const week = Number(weekStr);
-    const entries = season.matchupsByWeek[week] || [];
-    const out = [];
-    entries.forEach(entry => {
-      const managerKey = season.rosterIdToManagerKey[entry.roster_id];
-      const starters = entry.starters || [];
-      const startersPoints = entry.starters_points || starters.map(pid => (entry.players_points||{})[pid] || 0);
-      starters.forEach((pid,i) => {
-        if(!pid || pid === '0') return; // empty slot
-        out.push({
-          pid,
-          points: startersPoints[i] || 0,
-          rosterId: entry.roster_id,
-          managerKey,
-          slot: slotOrder[i] || 'UTIL',
-          matchupId: entry.matchup_id,
-          teamTotal: entry.points
-        });
-      });
-    });
-    DB.allStarters[year][week] = out;
-  });
-}
-
-/* ============================================================
    POTG / POTW
-   Rules confirmed in-thread:
+   Computed ON DEMAND from season.matchupsByWeek, mirroring the football archive's
+   computePotgData() pattern rather than caching into DB — always in sync, no
+   invalidation to worry about. Reads DB.allStarters as a fallback points source
+   exactly like football does, for the rare case players_points is missing.
+
+   Basketball-specific rules confirmed in-thread (these DIFFER from football's
+   simpler "just take the single highest score" logic):
    - 6 POTG/week (1 per matchup), regardless of win/loss.
    - Tie within a matchup -> winning team's player gets it.
    - Tie within a matchup AND both tied players on the winning team -> first in Sleeper's data order.
-   - POTW = single highest score among the week's POTGs; ties at that top score are SHARED (no winner-team preference at this level).
-   - Regular season only (playoff weeks were never loaded into DB.allStarters).
+   - POTW = highest score among the week's POTGs; ties at that top score are SHARED (no winner-team preference at this level).
+   - Regular season only — matchupsByWeek only ever contains regular-season weeks (see loadSeasonScoring).
    ============================================================ */
-function computeWeeklyAwards(year){
-  const weeks = DB.allStarters[year] || {};
-  DB.awards.potg[year] = {};
-  DB.awards.potw[year] = {};
+function computePotgData(yearFilter='all'){
+  const potgLog = []; // flat log: {pid, week, year, pts, type:'POTG'|'POTW', managerKey, rosterId}
+  const years = yearFilter === 'all'
+    ? Object.keys(DB.seasons).map(Number)
+    : [Number(yearFilter)];
 
-  Object.keys(weeks).forEach(weekStr => {
-    const week = Number(weekStr);
-    const starters = weeks[week];
-    // group by matchupId
-    const byMatchup = {};
-    starters.forEach(s => {
-      if(!byMatchup[s.matchupId]) byMatchup[s.matchupId] = [];
-      byMatchup[s.matchupId].push(s);
-    });
+  years.forEach(year => {
+    const season = DB.seasons[year];
+    if(!season) return;
 
-    const potgList = [];
-    Object.values(byMatchup).forEach(group => {
-      if(!group.length) return;
-      // which rosterId won this matchup
-      const rosterTotals = {};
-      group.forEach(s => { rosterTotals[s.rosterId] = s.teamTotal; });
-      const rosterIds = Object.keys(rosterTotals);
-      const winningRosterId = rosterIds.length === 2
-        ? (rosterTotals[rosterIds[0]] >= rosterTotals[rosterIds[1]] ? rosterIds[0] : rosterIds[1])
-        : rosterIds[0];
+    Object.entries(season.matchupsByWeek).forEach(([wStr, mus]) => {
+      const week = Number(wStr);
+      const byMatchup = {};
+      mus.forEach(m => { (byMatchup[m.matchup_id] = byMatchup[m.matchup_id] || []).push(m); });
 
-      const maxScore = Math.max(...group.map(s => s.points));
-      let tied = group.filter(s => s.points === maxScore);
-      if(tied.length > 1){
-        const onWinningTeam = tied.filter(s => String(s.rosterId) === String(winningRosterId));
-        tied = onWinningTeam.length ? [onWinningTeam[0]] : [tied[0]]; // first-in-data-order fallback
+      const weekPotgs = [];
+      Object.values(byMatchup).forEach(pair => {
+        if(pair.length < 2) return; // needs both sides to determine a winner
+
+        const totals = {};
+        pair.forEach(m => { totals[m.roster_id] = m.points; });
+        const rosterIds = Object.keys(totals);
+        const winningRosterId = totals[rosterIds[0]] >= totals[rosterIds[1]] ? rosterIds[0] : rosterIds[1];
+
+        const candidates = [];
+        pair.forEach(m => {
+          const managerKey = season.rosterIdToManagerKey[m.roster_id];
+          const ppts = m.players_points || {};
+          (m.starters || []).forEach(pid => {
+            if(!pid || pid === '0') return;
+            const pts = ppts[pid] ?? DB.allStarters.find(e => e.pid===pid && e.week===week && e.year===year)?.points ?? null;
+            if(pts === null) return;
+            candidates.push({pid, pts, rosterId:m.roster_id, managerKey});
+          });
+        });
+        if(!candidates.length) return;
+
+        const maxScore = Math.max(...candidates.map(c => c.pts));
+        let tied = candidates.filter(c => c.pts === maxScore);
+        if(tied.length > 1){
+          const onWinningTeam = tied.filter(c => String(c.rosterId) === String(winningRosterId));
+          tied = onWinningTeam.length ? [onWinningTeam[0]] : [tied[0]]; // first-in-data-order fallback
+        }
+        weekPotgs.push({...tied[0], week, year, type:'POTG'});
+      });
+
+      potgLog.push(...weekPotgs);
+
+      // POTW: highest score among this week's POTGs — SHARED on exact ties (unlike POTG, no winner-team tiebreak here)
+      if(weekPotgs.length){
+        const topScore = Math.max(...weekPotgs.map(p => p.pts));
+        weekPotgs.filter(p => p.pts === topScore).forEach(p => { p.type = 'POTW'; });
       }
-      potgList.push(tied[0]);
     });
-
-    DB.awards.potg[year][week] = potgList;
-
-    // POTW: highest score among this week's POTGs, shared on exact ties
-    if(potgList.length){
-      const topScore = Math.max(...potgList.map(p => p.points));
-      DB.awards.potw[year][week] = potgList.filter(p => p.points === topScore);
-    }else{
-      DB.awards.potw[year][week] = [];
-    }
   });
+
+  return potgLog;
 }
 
 /* ============================================================
@@ -617,11 +599,13 @@ function computeWeeklyAwards(year){
 const FLEX_FILL_ORDER = ['C','PF','SF','PG','SG','F','G','UTIL','UTIL','UTIL'];
 const ROOKIE_FILL_ORDER = ['C','PF','SF','PG','SG'];
 
+// Aggregates lineup points per player for a season — mirrors the football archive's
+// renderPlayers() aggregation, filtering the flat DB.allStarters array by year rather
+// than reading from a nested per-week cache.
 function computeSeasonTotals(year){
-  const weeks = DB.allStarters[year] || {};
   const totals = {}; // pid -> points
-  Object.values(weeks).forEach(list => {
-    list.forEach(s => { totals[s.pid] = (totals[s.pid]||0) + s.points; });
+  DB.allStarters.filter(s => s.year === year).forEach(s => {
+    totals[s.pid] = (totals[s.pid] || 0) + (s.points || 0);
   });
   return totals;
 }
@@ -700,8 +684,6 @@ function buildAllRookieTeam(year){
 }
 
 function buildHonorsForYear(year){
-  buildWeeklyLineupScores(year);
-  computeWeeklyAwards(year);
   buildAllDocileTeams(year);
   buildAllRookieTeam(year);
 }
@@ -799,20 +781,23 @@ const SECTIONS = {
   home:    {label:'Home',    icon:'ti-home',            panel:'home'},
   myteam:  {label:'My Team', icon:'ti-shirt-sport',     panel:'myteam'},
   league:  {label:'League',  icon:'ti-trophy',          panel:'league'},
+  players: {label:'Players', icon:'ti-chart-bar',       panel:'players'},
   draft:   {label:'Draft',   icon:'ti-clipboard-list',  panel:'draft'},
   alldocile:{label:'Honors', icon:'ti-medal',           panel:'alldocile'},
   awards:  {label:'POTG/POTW', icon:'ti-flame',         panel:'awards'},
   search:  {label:'Search',  icon:'ti-search',          panel:'search'}
 };
 // Order shown in nav (bottom nav shows a max of 5 primary + rest folded conceptually; kept flat here)
-const NAV_ORDER = ['home','myteam','league','draft','alldocile','awards','search'];
+const NAV_ORDER = ['home','myteam','league','players','draft','alldocile','awards','search'];
 
 /* ============================================================
    DATA LOADING
    ============================================================ */
 
 // Loads one season's league settings, rosters, and users; resolves aliased usernames
-// to canonical MANAGERS keys and attaches a rosterId -> managerKey map.
+// to canonical MANAGERS keys, and builds a `teams` array (mirrors the football
+// archive's shape: rosterId/managerKey/name/wins/losses/pf/pa) alongside a fast
+// rosterId -> managerKey lookup map for convenience.
 async function loadSeason(year){
   const leagueId = LEAGUE_IDS[year];
   if(!leagueId) return null;
@@ -829,8 +814,22 @@ async function loadSeason(year){
   const rosterIdToManagerKey = {};
   rosters.forEach(r => { rosterIdToManagerKey[r.roster_id] = userIdToManagerKey[r.owner_id]; });
 
+  const teams = rosters.map(r => {
+    const managerKey = rosterIdToManagerKey[r.roster_id];
+    const s = r.settings || {};
+    return {
+      rosterId: r.roster_id,
+      managerKey,
+      name: managerKey ? getTeamName(managerKey, year) : `Team ${r.roster_id}`,
+      wins: s.wins || 0,
+      losses: s.losses || 0,
+      pf: (s.fpts || 0) + ((s.fpts_decimal || 0) / 100),
+      pa: (s.fpts_against || 0) + ((s.fpts_against_decimal || 0) / 100)
+    };
+  });
+
   const seasonData = {
-    league, rosters, users,
+    league, rosters, users, teams,
     userIdToManagerKey, rosterIdToManagerKey,
     playoffWeekStart: league.settings ? league.settings.playoff_week_start : null,
     matchupsByWeek: {}
@@ -844,16 +843,83 @@ async function loadAllSeasons(){
   await Promise.all(years.map(y => loadSeason(y)));
 }
 
-// Pulls regular-season matchup weeks only (1 .. playoffWeekStart-1), per the ruling that
-// playoff scoring is excluded entirely from player-facing stat tracking.
-async function loadRegularSeasonMatchups(year){
+// Regular-season weeks only (1 .. playoffWeekStart-1) — playoff scoring is excluded
+// entirely from player-facing stat tracking per league rules confirmed in-thread.
+//
+// Scoring source priority mirrors the football archive exactly:
+//   1. Sleeper's own matchup.players_points[pid] — most reliable, already respects
+//      league scoring_settings AND correctly reflects whichever of the week's two
+//      games a manager locked in (Sleeper computes this itself; no special-casing needed).
+//   2. Raw stats + league scoring_settings via calcPoints(), when players_points is missing.
+//   3. Pre-aggregated pts fields as a last resort.
+// Results are pushed into DB.allStarters as a FLAT array (not nested by week), matching
+// the football archive's shape — this is what powers leaderboards, POTG, and any
+// week-over-week trend views off one shared list.
+async function loadSeasonScoring(year){
   const season = DB.seasons[year];
   if(!season) return;
   const leagueId = LEAGUE_IDS[year];
   const lastRegWeek = (season.playoffWeekStart || 19) - 1;
   const weeks = Array.from({length:lastRegWeek}, (_,i) => i+1);
-  const results = await Promise.all(weeks.map(w => apiFetch(`/league/${leagueId}/matchups/${w}`).catch(()=>null)));
-  weeks.forEach((w,i) => { season.matchupsByWeek[w] = results[i] || []; });
+
+  const [matchupResults, statResults] = await Promise.all([
+    Promise.all(weeks.map(w => apiFetch(`/league/${leagueId}/matchups/${w}`).then(mu=>({w,mu})).catch(()=>({w,mu:[]})))),
+    Promise.all(weeks.map(w => apiFetch(`/stats/nba/regular/${year}/${w}`).then(s=>({w,s})).catch(()=>({w,s:{}}))))
+  ]);
+
+  const statByWeek = {};
+  statResults.forEach(({w,s}) => { statByWeek[w] = s; });
+  matchupResults.forEach(({w,mu}) => { season.matchupsByWeek[w] = mu; });
+
+  const scoring = season.league.scoring_settings || {};
+
+  matchupResults.forEach(({w,mu}) => {
+    mu.forEach(entry => {
+      const managerKey = season.rosterIdToManagerKey[entry.roster_id];
+      const team = season.teams.find(t => t.rosterId === entry.roster_id);
+      const matchupPts = entry.players_points || {};
+      (entry.starters || []).forEach(pid => {
+        if(!pid || pid === '0') return;
+        let points = null;
+        if(matchupPts[pid] !== undefined){
+          points = matchupPts[pid];
+        } else {
+          const ps = (statByWeek[w] || {})[pid];
+          if(ps){
+            points = calcPoints(ps, scoring);
+            // pts_ppr/pts_half_ppr are NFL-only (points-per-reception) and don't exist in NBA
+            // stat objects — confirmed live: basketball's pre-aggregated field is pts_std.
+            if(points === null) points = ps.pts_std ?? null;
+          }
+        }
+        DB.allStarters.push({
+          pid, week:w, year,
+          points,
+          teamRosterId: entry.roster_id,
+          teamName: team ? team.name : 'Unknown',
+          managerKey
+        });
+      });
+    });
+  });
+}
+
+// Generic scoring calculator — iterates every key in the league's scoring_settings
+// and multiplies by the matching stat value. Sleeper uses identical key names across
+// sports, so this needs no NBA-specific translation; ported directly from football.
+function calcPoints(stats, scoring){
+  if(!stats || !scoring || Object.keys(scoring).length === 0) return null;
+  let pts = 0, hasAny = false;
+  for(const [key, weight] of Object.entries(scoring)){
+    if(weight === 0) continue;
+    const val = stats[key];
+    if(val !== undefined && val !== null && val !== 0){
+      pts += val * weight;
+      hasAny = true;
+    }
+  }
+  if(!hasAny) return null;
+  return Math.round(pts * 100) / 100;
 }
 
 async function loadAllDraftPicks(){
@@ -916,14 +982,15 @@ function lookupPid(name){
 const DB = {
   currentSeason: CURRENT_SEASON,
   selectedSeason: null,          // season the UI is currently browsing (defaults to latest completed)
-  seasons: {},                   // DB.seasons[year] = { league, rosters, users, matchupsByWeek, playoffWeekStart }
-  allStarters: {},               // DB.allStarters[year][week] = [{pid, points, rosterId, managerKey, slot}]
+  seasons: {},                   // DB.seasons[year] = { league, rosters, users, teams, matchupsByWeek, playoffWeekStart }
+  allStarters: [],               // FLAT array (mirrors football archive): {pid, week, year, points, teamRosterId, teamName, managerKey}
   playerMeta: {},                // DB.playerMeta[pid] = { name, teamAbbr, positionsBySeasonYear:{year:[...]}, ... }
   draftPicks: {},                // DB.draftPicks[year] = [ picks... ]
   startupDraftPicks: [],         // 2020 startup draft picks
   awards: {
-    potg: {},                    // DB.awards.potg[year][week] = [{pid, points, rosterId, matchupId}, ...]
-    potw: {},                    // DB.awards.potw[year][week] = [{pid, points, rosterId}, ...] (array to support shared honors)
+    // POTG/POTW are NOT cached here — computed on demand via computePotgData(yearFilter),
+    // same as the football archive's computePotgData(). Only the All-Docile/All-Rookie
+    // honor teams (basketball-only, no football equivalent) get precomputed and stored.
     allDocile: {},               // DB.awards.allDocile[year] = {1:[...10 slotted...], 2:[...], 3:[...]}
     allRookie: {}                // DB.awards.allRookie[year] = {1:[...5 slotted...], 2:[...], 3:[...]}
   },
@@ -946,7 +1013,7 @@ function renderSidebarNav(){
 }
 
 function renderBottomNav(){
-  const primary = ['home','myteam','league','alldocile','search'];
+  const primary = ['home','myteam','league','players','search'];
   const el = document.getElementById('bn-main');
   el.innerHTML = primary.map(key => `
     <div class="bn-item" data-nav="${key}" onclick="switchTab('${key}')">
@@ -981,6 +1048,7 @@ function switchTab(name){
   if(name==='home') renderHome();
   if(name==='myteam') renderMyTeam();
   if(name==='league') renderLeague();
+  if(name==='players') renderPlayersPanel();
   if(name==='draft') renderDraft();
   if(name==='alldocile') renderAllDocilePanel();
   if(name==='awards') renderAwardsPanel();
@@ -1088,6 +1156,114 @@ function renderLeague(){
   `;
 }
 
+/* ============================================================
+   PLAYER SCORING LEADERBOARD
+   Mirrors the football archive's renderPlayers(): aggregates the flat
+   DB.allStarters array by pid (total / starts / avg / best), with search,
+   position filter, and sortable columns. This is lineup-only, regular-season-only
+   scoring — same constraint as everywhere else in the app.
+   ============================================================ */
+let playersSort = {col:'total', dir:-1};
+
+function sortPlayersTable(col){
+  playersSort = playersSort.col === col ? {col, dir: playersSort.dir * -1} : {col, dir:-1};
+  renderPlayersTableBody();
+}
+
+function renderPlayersPanel(){
+  const el = document.getElementById('players-body');
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+      <input id="players-search" type="text" placeholder="Search players..."
+        style="flex:1;min-width:180px;padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+      <select id="players-pos-filter" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+        <option value="all">All positions</option>
+        ${TRUE_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}
+      </select>
+    </div>
+    <div id="players-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div style="overflow-x:auto;">
+      <table class="data-table">
+        <thead><tr>
+          <th style="cursor:default;">Player</th>
+          <th style="cursor:default;">Pos</th>
+          <th style="cursor:default;">Team</th>
+          <th onclick="sortPlayersTable('total')" class="${playersSort.col==='total'?'sorted':''}">Total Pts <span class="sort-arrow">${playersSort.col==='total'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
+          <th onclick="sortPlayersTable('starts')" class="${playersSort.col==='starts'?'sorted':''}">Starts <span class="sort-arrow">${playersSort.col==='starts'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
+          <th onclick="sortPlayersTable('avg')" class="${playersSort.col==='avg'?'sorted':''}">Avg <span class="sort-arrow">${playersSort.col==='avg'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
+          <th onclick="sortPlayersTable('best')" class="${playersSort.col==='best'?'sorted':''}">Best <span class="sort-arrow">${playersSort.col==='best'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
+        </tr></thead>
+        <tbody id="players-table-body"></tbody>
+      </table>
+    </div>
+  `;
+
+  const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
+  const selected = DB.selectedPlayersYear || 'all';
+  const chipsEl = document.getElementById('players-yr-chips');
+  chipsEl.innerHTML = `<div class="yr-chip ${selected==='all'?'active':''}" data-year="all">All-Time</div>` +
+    years.map(y => `<div class="yr-chip ${String(selected)===String(y)?'active':''}" data-year="${y}">${seasonLabel(y)}</div>`).join('');
+  chipsEl.querySelectorAll('.yr-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      DB.selectedPlayersYear = chip.dataset.year === 'all' ? 'all' : Number(chip.dataset.year);
+      renderPlayersPanel();
+    });
+  });
+
+  document.getElementById('players-search').addEventListener('input', renderPlayersTableBody);
+  document.getElementById('players-pos-filter').addEventListener('change', renderPlayersTableBody);
+
+  renderPlayersTableBody();
+}
+
+function renderPlayersTableBody(){
+  const body = document.getElementById('players-table-body');
+  if(!body) return;
+  const search = normalizeNameForMatch(document.getElementById('players-search')?.value || '');
+  const posFilter = document.getElementById('players-pos-filter')?.value || 'all';
+  const selected = DB.selectedPlayersYear || 'all';
+
+  const starters = selected === 'all' ? DB.allStarters : DB.allStarters.filter(s => s.year === selected);
+
+  const agg = {};
+  starters.forEach(s => {
+    if(!agg[s.pid]) agg[s.pid] = {pid:s.pid, starts:0, total:0, best:0};
+    agg[s.pid].starts++;
+    agg[s.pid].total += (s.points || 0);
+    if((s.points || 0) > agg[s.pid].best) agg[s.pid].best = s.points || 0;
+  });
+
+  let rows = Object.values(agg).map(p => {
+    const meta = DB.playerMeta[p.pid] || {};
+    const positions = getPlayerPositions(p.pid, selected === 'all' ? CURRENT_SEASON : selected);
+    return {...p, name: meta.name || `Player ${p.pid}`, teamAbbr: meta.teamAbbr || '', positions, avg: p.starts ? p.total/p.starts : 0};
+  });
+
+  if(search) rows = rows.filter(r => normalizeNameForMatch(r.name).includes(search));
+  if(posFilter !== 'all') rows = rows.filter(r => r.positions.includes(posFilter));
+
+  const dir = playersSort.dir;
+  const sf = {
+    total:(a,b)=>(a.total-b.total)*dir,
+    starts:(a,b)=>(a.starts-b.starts)*dir,
+    avg:(a,b)=>(a.avg-b.avg)*dir,
+    best:(a,b)=>(a.best-b.best)*dir
+  };
+  rows.sort(sf[playersSort.col] || sf.total);
+
+  if(!rows.length){ body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`; return; }
+
+  body.innerHTML = rows.slice(0,200).map(r => `<tr>
+    <td><a href="#" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</a></td>
+    <td>${renderPositionBadge(r.positions)}</td>
+    <td style="color:var(--text-dim);font-size:12px;">${r.teamAbbr}</td>
+    <td>${r.total.toFixed(1)}</td>
+    <td>${r.starts}</td>
+    <td>${r.avg.toFixed(1)}</td>
+    <td>${r.best.toFixed(1)}</td>
+  </tr>`).join('');
+}
+
 function renderDraft(){
   const el = document.getElementById('draft-body');
   el.innerHTML = `
@@ -1160,17 +1336,24 @@ function renderAwardsPanel(){
 
 function renderAwardsFor(year){
   const el = document.getElementById('awards-detail');
-  const potg = DB.awards.potg[year];
-  const potw = DB.awards.potw[year];
-  if(!potg){ el.innerHTML = `<div class="empty-state"><i class="ti ti-flame"></i>No award data built for ${seasonLabel(year)} yet.</div>`; return; }
-  const weeks = Object.keys(potg).map(Number).sort((a,b)=>a-b);
+  const log = computePotgData(year);
+  if(!log.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-flame"></i>No award data for ${seasonLabel(year)} yet.</div>`; return; }
+
+  const byWeek = {};
+  log.forEach(e => { (byWeek[e.week] = byWeek[e.week] || []).push(e); });
+  const weeks = Object.keys(byWeek).map(Number).sort((a,b)=>a-b);
+
   el.innerHTML = `<table class="data-table">
     <thead><tr><th>Week</th><th>Player of the Week</th><th>All Players of the Game</th></tr></thead>
-    <tbody>${weeks.map(w => `<tr>
-      <td>${w}</td>
-      <td>${(potw[w]||[]).map(p => `<a href="#" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</a> (${p.points.toFixed(1)})`).join(' &amp; ')}</td>
-      <td>${(potg[w]||[]).map(p => `${(DB.playerMeta[p.pid]||{}).name||p.pid} (${p.points.toFixed(1)})`).join(', ')}</td>
-    </tr>`).join('')}</tbody>
+    <tbody>${weeks.map(w => {
+      const entries = byWeek[w];
+      const potw = entries.filter(e => e.type === 'POTW');
+      return `<tr>
+        <td>${w}</td>
+        <td>${potw.map(p => `<a href="#" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</a> (${p.pts.toFixed(1)})`).join(' &amp; ')}</td>
+        <td>${entries.map(p => `${(DB.playerMeta[p.pid]||{}).name||p.pid} (${p.pts.toFixed(1)})`).join(', ')}</td>
+      </tr>`;
+    }).join('')}</tbody>
   </table>`;
 }
 
@@ -1244,7 +1427,7 @@ async function init(){
 
     const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
     for(const y of years){
-      await loadRegularSeasonMatchups(y);
+      await loadSeasonScoring(y);
       buildHonorsForYear(y);
     }
 
