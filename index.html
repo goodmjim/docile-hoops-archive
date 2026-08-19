@@ -949,13 +949,13 @@ const NAV_GROUPS = [
   {
     key:'myteam', label:'My Team', icon:'ti-shirt-sport',
     pages:[
-      {key:'myscoring',  label:'My Scoring',       icon:'ti-target-arrow',     desc:'Every player you\u2019ve started, ranked by points, starts, average, or best game.', ready:false},
+      {key:'myscoring',  label:'My Scoring',       icon:'ti-target-arrow',     desc:'Every player you\u2019ve started, ranked by points, starts, average, or best game.', ready:true},
       {key:'mytimeline', label:'My Timeline',      icon:'ti-history',          desc:'Year-by-year record, finish, PF/PA, team name, and trophy history.', ready:true},
-      {key:'myh2h',      label:'My H2H',           icon:'ti-versus',           desc:'Your all-time record against every other manager.', ready:false},
-      {key:'mydraft',    label:'My Draft',         icon:'ti-clipboard-list',   desc:'Every rookie pick you\u2019ve made, with points scored for your team.', ready:false},
-      {key:'mytrades',   label:'My Trades',        icon:'ti-arrows-exchange',  desc:'All trades involving your roster across loaded seasons.', ready:false},
-      {key:'mylineup',   label:'All-Time Lineup',  icon:'ti-crown',            desc:'Your best-ever starting lineup across every season you\u2019ve played.', ready:false},
-      {key:'mynba',      label:'My NBA Breakdown', icon:'ti-building-stadium', desc:'How often you\u2019ve started players from each NBA franchise.', ready:false}
+      {key:'myh2h',      label:'My H2H',           icon:'ti-versus',           desc:'Your all-time record against every other manager.', ready:true},
+      {key:'mydraft',    label:'My Draft',         icon:'ti-clipboard-list',   desc:'Every rookie pick you\u2019ve made, with points scored for your team.', ready:true},
+      {key:'mytrades',   label:'My Trades',        icon:'ti-arrows-exchange',  desc:'All trades involving your roster across loaded seasons.', ready:true},
+      {key:'mylineup',   label:'All-Time Lineup',  icon:'ti-crown',            desc:'Your best-ever starting lineup across every season you\u2019ve played.', ready:true},
+      {key:'mynba',      label:'My NBA Breakdown', icon:'ti-building-stadium', desc:'How often you\u2019ve started players from each NBA franchise.', ready:true}
     ]
   },
   {
@@ -1049,6 +1049,27 @@ async function loadAllSeasons(){
 // Results are pushed into DB.allStarters as a FLAT array (not nested by week), matching
 // the football archive's shape — this is what powers leaderboards, POTG, and any
 // week-over-week trend views off one shared list.
+// Pulls trade transactions over the same regular-season week range as scoring.
+// Mirrors the football archive's approach exactly, including its scope limitation:
+// only regular-season weeks are covered, so any trade made during a playoff week
+// or the pre-week-1 offseason window won't appear here.
+async function loadTransactions(year){
+  const season = DB.seasons[year];
+  if(!season) return;
+  const leagueId = LEAGUE_IDS[year];
+  const lastRegWeek = (season.playoffWeekStart || 19) - 1;
+  const weeks = Array.from({length:lastRegWeek}, (_,i) => i+1);
+
+  const results = await Promise.all(weeks.map(w =>
+    apiFetch(`/league/${leagueId}/transactions/${w}`)
+      .then(tx => tx.map(t => ({...t, week:w, year})))
+      .catch(() => [])
+  ));
+
+  const trades = results.flat().filter(t => t.type === 'trade' && t.status === 'complete');
+  DB.transactions.push(...trades);
+}
+
 async function loadSeasonScoring(year){
   const season = DB.seasons[year];
   if(!season) return;
@@ -1209,6 +1230,7 @@ const DB = {
   playerMeta: {},                // DB.playerMeta[pid] = { name, teamAbbr, positionsBySeasonYear:{year:[...]}, ... }
   draftPicks: {},                // DB.draftPicks[year] = [ picks... ]
   startupDraftPicks: [],         // 2020 startup draft picks
+  transactions: [],              // completed trades, flat array: {type:'trade', roster_ids, adds, drops, draft_picks, week, year, ...}
   awards: {
     // POTG/POTW are NOT cached here — computed on demand via computePotgData(yearFilter),
     // same as the football archive's computePotgData(). Only the All-Docile/All-Rookie
@@ -1291,7 +1313,13 @@ const RENDER_FNS = {
   dashboard: renderDashboard,
   recap: renderRecapPanel,
   tutorial: renderTutorial,
+  myscoring: renderMyScoringPanel,
   mytimeline: renderMyTimeline,
+  myh2h: renderMyH2HPanel,
+  mydraft: renderMyDraftPanel,
+  mytrades: renderMyTradesPanel,
+  mylineup: renderMyLineupPanel,
+  mynba: renderMyNbaPanel,
   playerscoring: renderPlayersPanel,
   standings: renderStandings,
   draft: renderDraft,
@@ -1638,6 +1666,330 @@ function renderTutorial(){
   `;
 }
 
+/* ============================================================
+   MY SCORING
+   Same aggregation as League > Player Scoring, filtered to the signed-in
+   manager's starts only.
+   ============================================================ */
+let myScoringSort = {col:'total', dir:-1};
+
+function sortMyScoringTable(col){
+  myScoringSort = myScoringSort.col === col ? {col, dir: myScoringSort.dir * -1} : {col, dir:-1};
+  renderMyScoringTableBody();
+}
+
+function renderMyScoringPanel(){
+  const el = document.getElementById('myscoring-body');
+  if(!DB.myManagerKey){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your scoring history.</div>`;
+    return;
+  }
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+      <input id="myscoring-search" type="text" placeholder="Search players..."
+        style="flex:1;min-width:180px;padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+      <select id="myscoring-pos-filter" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+        <option value="all">All positions</option>
+        ${TRUE_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}
+      </select>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="data-table">
+        <thead><tr>
+          <th style="cursor:default;">Player</th>
+          <th style="cursor:default;">Pos</th>
+          <th onclick="sortMyScoringTable('total')">Total Pts</th>
+          <th onclick="sortMyScoringTable('starts')">Starts</th>
+          <th onclick="sortMyScoringTable('avg')">Avg</th>
+          <th onclick="sortMyScoringTable('best')">Best</th>
+        </tr></thead>
+        <tbody id="myscoring-table-body"></tbody>
+      </table>
+    </div>
+  `;
+  document.getElementById('myscoring-search').addEventListener('input', renderMyScoringTableBody);
+  document.getElementById('myscoring-pos-filter').addEventListener('change', renderMyScoringTableBody);
+  renderMyScoringTableBody();
+}
+
+function renderMyScoringTableBody(){
+  const body = document.getElementById('myscoring-table-body');
+  if(!body) return;
+  const search = normalizeNameForMatch(document.getElementById('myscoring-search')?.value || '');
+  const posFilter = document.getElementById('myscoring-pos-filter')?.value || 'all';
+
+  const starters = DB.allStarters.filter(s => s.managerKey === DB.myManagerKey);
+  const agg = {};
+  starters.forEach(s => {
+    if(!agg[s.pid]) agg[s.pid] = {pid:s.pid, starts:0, total:0, best:0};
+    agg[s.pid].starts++;
+    agg[s.pid].total += (s.points || 0);
+    if((s.points || 0) > agg[s.pid].best) agg[s.pid].best = s.points || 0;
+  });
+
+  let rows = Object.values(agg).map(p => {
+    const meta = DB.playerMeta[p.pid] || {};
+    const positions = getPlayerPositions(p.pid, CURRENT_SEASON);
+    return {...p, name: meta.name || `Player ${p.pid}`, positions, avg: p.starts ? p.total/p.starts : 0};
+  });
+
+  if(search) rows = rows.filter(r => normalizeNameForMatch(r.name).includes(search));
+  if(posFilter !== 'all') rows = rows.filter(r => r.positions.includes(posFilter));
+
+  const dir = myScoringSort.dir;
+  const sf = {
+    total:(a,b)=>(a.total-b.total)*dir, starts:(a,b)=>(a.starts-b.starts)*dir,
+    avg:(a,b)=>(a.avg-b.avg)*dir, best:(a,b)=>(a.best-b.best)*dir
+  };
+  rows.sort(sf[myScoringSort.col] || sf.total);
+
+  if(!rows.length){ body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-faint);padding:24px;">No starters found.</td></tr>`; return; }
+
+  body.innerHTML = rows.map(r => `<tr>
+    <td><a href="#" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</a></td>
+    <td>${renderPositionBadge(r.positions)}</td>
+    <td>${r.total.toFixed(1)}</td>
+    <td>${r.starts}</td>
+    <td>${r.avg.toFixed(1)}</td>
+    <td>${r.best.toFixed(1)}</td>
+  </tr>`).join('');
+}
+
+/* ============================================================
+   MY H2H
+   Record against every other manager across all loaded regular seasons.
+   ============================================================ */
+function renderMyH2HPanel(){
+  const el = document.getElementById('myh2h-body');
+  if(!DB.myManagerKey){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your head-to-head record.</div>`;
+    return;
+  }
+  const opponents = Object.keys(MANAGERS).filter(k => k !== DB.myManagerKey);
+  const rows = opponents.map(oppKey => {
+    const h2h = computeAllTimeH2H(DB.myManagerKey, oppKey);
+    const games = h2h.w1 + h2h.w2;
+    return {oppKey, w:h2h.w1, l:h2h.w2, games, pct: games ? h2h.w1/games : 0};
+  }).filter(r => r.games > 0).sort((a,b) => b.w - a.w);
+
+  if(!rows.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-versus"></i>No head-to-head games found yet.</div>`; return; }
+
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Opponent</th><th>W</th><th>L</th><th>Win %</th><th>Games</th></tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td>${(getManager(r.oppKey)||{}).name || r.oppKey}</td>
+      <td style="font-family:var(--font-mono);">${r.w}</td>
+      <td style="font-family:var(--font-mono);">${r.l}</td>
+      <td style="font-family:var(--font-mono);">${(r.pct*100).toFixed(0)}%</td>
+      <td style="font-family:var(--font-mono);color:var(--text-faint);">${r.games}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+/* ============================================================
+   MY DRAFT
+   Rookie draft picks only — the 2020 startup draft is excluded per league rules.
+   ============================================================ */
+function renderMyDraftPanel(){
+  const el = document.getElementById('mydraft-body');
+  if(!DB.myManagerKey){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your draft history.</div>`;
+    return;
+  }
+  const years = Object.keys(ROOKIE_DRAFT_IDS).map(Number).sort((a,b)=>b-a);
+  const picks = [];
+  years.forEach(y => {
+    const season = DB.seasons[y];
+    (DB.draftPicks[y] || []).forEach(p => {
+      const managerKey = season ? season.rosterIdToManagerKey[p.roster_id] : null;
+      if(managerKey !== DB.myManagerKey) return;
+      const name = (p.metadata && p.metadata.first_name) ? `${p.metadata.first_name} ${p.metadata.last_name}` : (p.player_id || 'Unknown');
+      const myStarts = DB.allStarters.filter(s => s.pid === p.player_id && s.managerKey === DB.myManagerKey);
+      const pts = myStarts.reduce((a,b) => a + (b.points||0), 0);
+      picks.push({year:y, round:p.round, pickNo:p.pick_no, pid:p.player_id, name, pts, starts:myStarts.length});
+    });
+  });
+
+  if(!picks.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i>No draft picks found for your roster.</div>`; return; }
+
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Year</th><th>Rd</th><th>Pick</th><th>Player</th><th>Pts for you</th><th>Starts</th></tr></thead>
+    <tbody>${picks.map(p => `<tr>
+      <td>${seasonLabel(p.year)}</td>
+      <td>${p.round}</td>
+      <td>${p.pickNo}</td>
+      <td>${p.pid ? `<a href="#" onclick="openPlayerModal('${p.pid}');return false;">${p.name}</a>` : p.name}</td>
+      <td style="font-family:var(--font-mono);">${p.pts > 0 ? p.pts.toFixed(1) : '—'}</td>
+      <td style="font-family:var(--font-mono);">${p.starts || '—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+/* ============================================================
+   MY TRADES
+   Every completed trade involving the signed-in manager's roster.
+   ============================================================ */
+function renderMyTradesPanel(){
+  const el = document.getElementById('mytrades-body');
+  if(!DB.myManagerKey){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your trades.</div>`;
+    return;
+  }
+  const myRosterIds = new Set();
+  Object.values(DB.seasons).forEach(s => {
+    (s.teams||[]).forEach(t => { if(t.managerKey === DB.myManagerKey) myRosterIds.add(t.rosterId); });
+  });
+
+  const myTrades = DB.transactions.filter(t => (t.roster_ids||[]).some(r => myRosterIds.has(r)));
+  if(!myTrades.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-arrows-exchange"></i>No trades found on your roster.</div>`; return; }
+
+  myTrades.sort((a,b) => b.year-a.year || b.week-a.week);
+
+  el.innerHTML = myTrades.map(t => {
+    const season = DB.seasons[t.year];
+    const [r1, r2] = t.roster_ids || [0,0];
+    const mk1 = season ? season.rosterIdToManagerKey[r1] : null;
+    const mk2 = season ? season.rosterIdToManagerKey[r2] : null;
+    const adds = t.adds || {};
+    const buildSide = (rid) => Object.entries(adds).filter(([,r]) => r === rid).map(([pid]) => {
+      const meta = DB.playerMeta[pid] || {};
+      const pts = DB.allStarters.filter(s => s.pid === pid && s.year >= t.year && s.teamRosterId === rid).reduce((a,b) => a+(b.points||0), 0);
+      return {name: meta.name || pid, pts};
+    });
+    const side1 = buildSide(r1), side2 = buildSide(r2);
+
+    return `<div class="card" style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;color:var(--text-faint);font-size:11.5px;margin-bottom:10px;">
+        <span>${seasonLabel(t.year)} \u00b7 Week ${t.week}</span>
+        <span>${(getManager(mk1)||{}).name||mk1} \u2194 ${(getManager(mk2)||{}).name||mk2}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div>
+          <div style="font-weight:600;font-size:12.5px;margin-bottom:6px;">${(getManager(mk1)||{}).name||mk1} received${mk1===DB.myManagerKey?' (you)':''}</div>
+          ${side1.map(p => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;"><span>${p.name}</span><span style="color:var(--text-faint);">${p.pts>0?p.pts.toFixed(1)+' pts':'—'}</span></div>`).join('')}
+        </div>
+        <div>
+          <div style="font-weight:600;font-size:12.5px;margin-bottom:6px;">${(getManager(mk2)||{}).name||mk2} received${mk2===DB.myManagerKey?' (you)':''}</div>
+          ${side2.map(p => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;"><span>${p.name}</span><span style="color:var(--text-faint);">${p.pts>0?p.pts.toFixed(1)+' pts':'—'}</span></div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* ============================================================
+   ALL-TIME LINEUP
+   Best-ever starting lineup for the signed-in manager, using the same
+   scarcity-fill slot algorithm as All-Docile team construction, scoped
+   to only that manager's own starts.
+   ============================================================ */
+let myLineupMode = 'total';
+const MY_LINEUP_MODE_LABELS = {games:'Most starts', total:'All-time points', best:'Best single game'};
+
+function setMyLineupMode(mode){
+  myLineupMode = mode;
+  renderMyLineupPanel();
+}
+
+function renderMyLineupPanel(){
+  const el = document.getElementById('mylineup-body');
+  if(!DB.myManagerKey){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your all-time lineup.</div>`;
+    return;
+  }
+  const myStarters = DB.allStarters.filter(s => s.managerKey === DB.myManagerKey);
+  if(!myStarters.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-crown"></i>No starts found for your roster.</div>`; return; }
+
+  const byPid = {};
+  myStarters.forEach(s => {
+    if(!byPid[s.pid]) byPid[s.pid] = {pid:s.pid, starts:0, total:0, best:0};
+    byPid[s.pid].starts++;
+    byPid[s.pid].total += (s.points||0);
+    if((s.points||0) > byPid[s.pid].best) byPid[s.pid].best = s.points||0;
+  });
+
+  const metric = {games:'starts', total:'total', best:'best'}[myLineupMode];
+  let pool = Object.keys(byPid).sort((a,b) => byPid[b][metric] - byPid[a][metric]);
+
+  const roster = [];
+  FLEX_FILL_ORDER.forEach(slot => {
+    const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, CURRENT_SEASON));
+    if(idx === -1){ roster.push({slot, pid:null}); return; }
+    const pid = pool[idx];
+    roster.push({slot, pid, ...byPid[pid], resolvedPosition: resolvePositionForSlot(pid, slot, CURRENT_SEASON)});
+    pool.splice(idx,1);
+  });
+
+  const valueLabel = (r) => {
+    if(!r.pid) return '';
+    if(myLineupMode === 'games') return `${r.starts} starts`;
+    if(myLineupMode === 'best') return `${r.best.toFixed(1)} pts (best)`;
+    return `${r.total.toFixed(1)} pts`;
+  };
+
+  el.innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      ${Object.keys(MY_LINEUP_MODE_LABELS).map(mode => `
+        <div class="yr-chip ${mode===myLineupMode?'active':''}" onclick="setMyLineupMode('${mode}')">${MY_LINEUP_MODE_LABELS[mode]}</div>`).join('')}
+    </div>
+    <div class="card" style="max-width:480px;">
+      <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">${(getManager(DB.myManagerKey)||{}).name} \u00b7 ${MY_LINEUP_MODE_LABELS[myLineupMode]}</div>
+      ${roster.map(r => `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-soft);">
+          <span style="width:38px;font-size:11px;color:var(--text-faint);font-weight:700;">${r.slot}</span>
+          ${r.pid ? renderSlotBadge(r.resolvedPosition, r.slot) : ''}
+          <span style="flex:1;">${r.pid ? `<a href="#" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name||r.pid}</a>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</span>
+          <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-dim);">${valueLabel(r)}</span>
+        </div>`).join('')}
+    </div>
+  `;
+}
+
+/* ============================================================
+   MY NBA BREAKDOWN
+   How often the signed-in manager has started players from each NBA team.
+   Note: Sleeper only stores each player's CURRENT team, so a traded player's
+   history reflects their present team, not their team at the time they started.
+   ============================================================ */
+function renderMyNbaPanel(){
+  const el = document.getElementById('mynba-body');
+  if(!DB.myManagerKey){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your NBA team breakdown.</div>`;
+    return;
+  }
+  const myStarters = DB.allStarters.filter(s => s.managerKey === DB.myManagerKey);
+  const byTeam = {};
+  myStarters.forEach(s => {
+    const meta = DB.playerMeta[s.pid];
+    const nbaTeam = meta ? meta.teamAbbr : null;
+    if(!nbaTeam) return;
+    if(!byTeam[nbaTeam]) byTeam[nbaTeam] = {team:nbaTeam, appearances:0, players:new Set()};
+    byTeam[nbaTeam].appearances++;
+    byTeam[nbaTeam].players.add(s.pid);
+  });
+
+  const rows = Object.values(byTeam).map(r => ({...r, unique:r.players.size})).sort((a,b) => b.appearances - a.appearances);
+  if(!rows.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-building-stadium"></i>No data found.</div>`; return; }
+
+  const maxApp = Math.max(...rows.map(r => r.appearances));
+  el.innerHTML = `
+    <p style="color:var(--text-faint);font-size:11.5px;margin-bottom:14px;">NBA team reflects each player's current team in Sleeper \u2014 historical team at time of start may differ for traded players.</p>
+    <table class="data-table">
+      <thead><tr><th>NBA Team</th><th>Appearances</th><th>Unique Players</th><th></th></tr></thead>
+      <tbody>${rows.map(r => `<tr>
+        <td style="font-weight:600;">${r.team}</td>
+        <td style="font-family:var(--font-mono);">${r.appearances}</td>
+        <td style="font-family:var(--font-mono);">${r.unique}</td>
+        <td style="width:140px;">
+          <div style="height:5px;background:var(--border);border-radius:3px;overflow:hidden;">
+            <div style="height:100%;width:${(r.appearances/maxApp*100).toFixed(0)}%;background:var(--accent);border-radius:3px;"></div>
+          </div>
+        </td>
+      </tr>`).join('')}</tbody>
+    </table>
+  `;
+}
+
 function renderMyTimeline(){
   const el = document.getElementById('mytimeline-body');
   el.innerHTML = `
@@ -1661,16 +2013,33 @@ function renderMyTimelineFor(managerKey){
       <h3>${m.name}</h3>
       <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:10px;">Fellowship member ${seasonLabel(years[0])} – ${seasonLabel(years[years.length-1])}</div>
       <table class="data-table">
-        <thead><tr><th>Season</th><th>Team Name</th><th>Finish</th></tr></thead>
+        <thead><tr><th>Season</th><th>Team Name</th><th>Record</th><th>PF</th><th>PA</th><th>Finish</th><th></th></tr></thead>
         <tbody>
-          ${years.map(y => `<tr>
-            <td>${seasonLabel(y)}</td>
-            <td>${getTeamName(managerKey,y)}</td>
-            <td>${FINAL_STANDINGS[y] && FINAL_STANDINGS[y].champion===managerKey ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : '—'}</td>
-          </tr>`).join('')}
+          ${years.map(y => {
+            const season = DB.seasons[y];
+            const team = season ? (season.teams||[]).find(t => t.managerKey === managerKey) : null;
+            let record = '—', pf = '—', pa = '—', finish = '—';
+            if(team){
+              record = `${team.wins}\u2013${team.losses}`;
+              pf = team.pf.toFixed(0);
+              pa = team.pa.toFixed(0);
+              const ranked = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
+              const rank = ranked.findIndex(t => t.managerKey === managerKey) + 1;
+              if(rank > 0) finish = `#${rank} of ${ranked.length}`;
+            }
+            const isChamp = FINAL_STANDINGS[y] && FINAL_STANDINGS[y].champion === managerKey;
+            return `<tr>
+              <td>${seasonLabel(y)}</td>
+              <td>${getTeamName(managerKey,y)}</td>
+              <td style="font-family:var(--font-mono);">${record}</td>
+              <td style="font-family:var(--font-mono);">${pf}</td>
+              <td style="font-family:var(--font-mono);">${pa}</td>
+              <td>${finish}</td>
+              <td>${isChamp ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : ''}</td>
+            </tr>`;
+          }).join('')}
         </tbody>
       </table>
-      <div style="color:var(--text-faint);font-size:11.5px;margin-top:10px;">Record, PF/PA, and order of finish per season arrive in Phase 2.</div>
     </div>
   `;
 }
@@ -2026,6 +2395,7 @@ async function loadAllData(onProgress = () => {}){
     const y = years[i];
     onProgress(55 + Math.round((i/years.length)*40), `Loading ${seasonLabel(y)} scoring… (${i+1}/${years.length})`);
     await loadSeasonScoring(y);
+    await loadTransactions(y);
     buildHonorsForYear(y);
   }
   onProgress(100, '');
