@@ -420,6 +420,9 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
    ============================================================ */
 const CF_WORKER_URL = 'https://sleeper-proxy.jimmygoodman52.workers.dev';
 const SNAPSHOT_BASE = ''; // e.g. '/snapshots' or full GH Pages path; filled in when snapshots exist
+// TODO: point this at a second Cloudflare Worker that proxies to the Anthropic API,
+// once set up. Powers the Weekly Recap AI blurb and (eventually) Smart Search.
+const CLAUDE_WORKER_URL = 'https://docile-league-claude.jimmygoodman52.workers.dev';
 
 /* ============================================================
    LEAGUE CONSTANTS
@@ -709,6 +712,140 @@ function buildHonorsForYear(year){
 }
 
 /* ============================================================
+   ALL-TIME AGGREGATION HELPERS
+   Used by the Dashboard's automated insights and the Weekly Recap.
+   Reads directly from each season's `teams` array (wins/losses/pf/pa,
+   already computed by loadSeason from roster settings) and from
+   matchupsByWeek for head-to-head records.
+   ============================================================ */
+function computeAllTimeManagerRecords(){
+  const agg = {}; // managerKey -> {wins, losses, pf, pa}
+  Object.values(DB.seasons).forEach(season => {
+    (season.teams || []).forEach(t => {
+      if(!t.managerKey) return;
+      if(!agg[t.managerKey]) agg[t.managerKey] = {wins:0, losses:0, pf:0, pa:0};
+      agg[t.managerKey].wins += t.wins;
+      agg[t.managerKey].losses += t.losses;
+      agg[t.managerKey].pf += t.pf;
+      agg[t.managerKey].pa += t.pa;
+    });
+  });
+  return agg;
+}
+
+// Head-to-head record between two managers across every loaded season's regular-season matchups.
+function computeAllTimeH2H(mk1, mk2){
+  let w1 = 0, w2 = 0;
+  Object.values(DB.seasons).forEach(season => {
+    Object.values(season.matchupsByWeek || {}).forEach(mus => {
+      const byId = {};
+      mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
+      Object.values(byId).forEach(pair => {
+        if(pair.length < 2) return;
+        const [a, b] = pair;
+        const ka = season.rosterIdToManagerKey[a.roster_id];
+        const kb = season.rosterIdToManagerKey[b.roster_id];
+        const isA1 = ka === mk1, isB1 = kb === mk1;
+        const isA2 = ka === mk2, isB2 = kb === mk2;
+        if(!((isA1 && isB2) || (isB1 && isA2))) return;
+        const pa = a.points || 0, pb = b.points || 0;
+        if(isA1 && pa > pb) w1++; else if(isA1 && pb > pa) w2++;
+        else if(isB1 && pb > pa) w1++; else if(isB1 && pa > pb) w2++;
+      });
+    });
+  });
+  return {w1, w2};
+}
+
+/* ============================================================
+   AUTOMATED INSIGHTS
+   Generates a handful of factual, data-derived cards for the Dashboard.
+   Mirrors the football archive's generateInsights() in spirit, scoped to
+   what basketball actually has loaded — projection-based insights are
+   left out until Projections (Phase 3) is built.
+   ============================================================ */
+function generateInsights(){
+  const cards = [];
+  if(!DB.allStarters.length) return cards;
+
+  // All-time league leader (career lineup points, any position)
+  const allTimeTotals = {};
+  DB.allStarters.forEach(s => { allTimeTotals[s.pid] = (allTimeTotals[s.pid] || 0) + (s.points || 0); });
+  const rankedAllTime = Object.entries(allTimeTotals).map(([pid, pts]) => ({pid, pts})).sort((a,b) => b.pts - a.pts);
+  if(rankedAllTime[0]){
+    const r = rankedAllTime[0];
+    const name = (DB.playerMeta[r.pid] || {}).name || `Player ${r.pid}`;
+    cards.push({label:'All-Time League Leader', text:`<strong>${name}</strong> leads all-time with <strong>${r.pts.toFixed(1)} lineup pts</strong> across every loaded season.`});
+  }
+
+  // Top scorer at each true position, all-time
+  TRUE_POSITIONS.forEach(pos => {
+    const posRanked = rankedAllTime.filter(r => getPlayerPositions(r.pid, CURRENT_SEASON).includes(pos));
+    if(!posRanked.length) return;
+    const r = posRanked[0];
+    const name = (DB.playerMeta[r.pid] || {}).name || `Player ${r.pid}`;
+    cards.push({label:`Top ${pos} All-Time`, text:`<strong>${name}</strong> is the highest-scoring ${pos} in Fellowship history with <strong>${r.pts.toFixed(1)} pts</strong>.`});
+  });
+
+  // Best all-time manager record
+  const mgrRecords = computeAllTimeManagerRecords();
+  const mgrRanked = Object.entries(mgrRecords).map(([k,d]) => ({k, ...d, pct: d.wins/((d.wins+d.losses)||1)})).sort((a,b) => b.wins - a.wins);
+  if(mgrRanked[0]){
+    const r = mgrRanked[0];
+    const name = (getManager(r.k) || {}).name || r.k;
+    cards.push({label:'Best All-Time Record', text:`<strong>${name}</strong> leads all managers with <strong>${r.wins}\u2013${r.losses}</strong> (${(r.pct*100).toFixed(0)}% win rate).`});
+  }
+
+  // Highest-scoring manager (total PF across all seasons)
+  const topPF = [...mgrRanked].sort((a,b) => b.pf - a.pf)[0];
+  if(topPF){
+    const name = (getManager(topPF.k) || {}).name || topPF.k;
+    cards.push({label:'Highest Scoring Manager', text:`<strong>${name}</strong> has scored the most points all-time: <strong>${topPF.pf.toLocaleString(undefined,{maximumFractionDigits:0})}</strong> total.`});
+  }
+
+  // Most lopsided rivalry (min 4 head-to-head games)
+  const managerKeys = Object.keys(mgrRecords);
+  let dominant = null;
+  for(let i=0;i<managerKeys.length;i++){
+    for(let j=i+1;j<managerKeys.length;j++){
+      const h2h = computeAllTimeH2H(managerKeys[i], managerKeys[j]);
+      const total = h2h.w1 + h2h.w2;
+      if(total < 4) continue;
+      const skew = Math.abs(h2h.w1 - h2h.w2) / total;
+      if(!dominant || skew > dominant.skew) dominant = {a:managerKeys[i], b:managerKeys[j], ...h2h, skew};
+    }
+  }
+  if(dominant){
+    const domKey = dominant.w1 >= dominant.w2 ? dominant.a : dominant.b;
+    const subKey = dominant.w1 >= dominant.w2 ? dominant.b : dominant.a;
+    const domName = (getManager(domKey) || {}).name || domKey;
+    const subName = (getManager(subKey) || {}).name || subKey;
+    const domWins = Math.max(dominant.w1, dominant.w2), subWins = Math.min(dominant.w1, dominant.w2);
+    cards.push({label:'Most Lopsided Rivalry', text:`<strong>${domName}</strong> dominates <strong>${subName}</strong> head-to-head, <strong>${domWins}\u2013${subWins}</strong> in loaded seasons.`});
+  }
+
+  // Highest single-game lineup score, all-time
+  const bestGame = [...DB.allStarters].filter(s => s.points != null).sort((a,b) => b.points - a.points)[0];
+  if(bestGame){
+    const name = (DB.playerMeta[bestGame.pid] || {}).name || `Player ${bestGame.pid}`;
+    const mgrName = (getManager(bestGame.managerKey) || {}).name || bestGame.managerKey || '?';
+    cards.push({label:'Highest Single-Game Score', text:`<strong>${name}</strong> holds the all-time single-game record: <strong>${bestGame.points.toFixed(2)} pts</strong> in Week ${bestGame.week} of ${seasonLabel(bestGame.year)} for <strong>${mgrName}</strong>.`});
+  }
+
+  // Most championships
+  const champCounts = {};
+  Object.values(FINAL_STANDINGS).forEach(f => { champCounts[f.champion] = (champCounts[f.champion]||0) + 1; });
+  const mostChamps = Object.entries(champCounts).sort((a,b) => b[1]-a[1])[0];
+  if(mostChamps && mostChamps[1] > 1){
+    const name = (getManager(mostChamps[0]) || {}).name || mostChamps[0];
+    const years = Object.entries(FINAL_STANDINGS).filter(([,f]) => f.champion === mostChamps[0]).map(([y]) => seasonLabel(Number(y))).join(', ');
+    cards.push({label:'Most Championships', text:`<strong>${name}</strong> leads all managers with <strong>${mostChamps[1]} championships</strong> (${years}).`});
+  }
+
+  return cards;
+}
+
+/* ============================================================
    API FETCH — proxied through Cloudflare Worker
    ============================================================ */
 async function apiFetch(path){
@@ -805,8 +942,8 @@ const NAV_GROUPS = [
     key:'home', label:'Home', icon:'ti-home',
     pages:[
       {key:'dashboard', label:'Dashboard',      icon:'ti-layout-dashboard', desc:'League overview, current standings, and recent activity.', ready:true},
-      {key:'recap',     label:'Weekly Recap',   icon:'ti-notebook',         desc:'A week-by-week narrative recap of the season.', ready:false},
-      {key:'tutorial',  label:'Archive Tutorial', icon:'ti-book-2',         desc:'A quick tour of everything the archive can show you.', ready:false}
+      {key:'recap',     label:'Weekly Recap',   icon:'ti-notebook',         desc:'A week-by-week narrative recap of the season.', ready:true},
+      {key:'tutorial',  label:'Archive Tutorial', icon:'ti-book-2',         desc:'A quick tour of everything the archive can show you.', ready:true}
     ]
   },
   {
@@ -979,6 +1116,32 @@ function calcPoints(stats, scoring){
   return Math.round(pts * 100) / 100;
 }
 
+// "1" -> "1st", "2" -> "2nd", etc. Used for career POTG/POTW counts in the Weekly Recap.
+function ordinal(n){
+  const s = ['th','st','nd','rd'], v = n % 100;
+  return s[(v-20)%10] || s[v] || s[0];
+}
+
+// Proxies to a second Cloudflare Worker that talks to the Anthropic API. Not yet
+// deployed — powers the Weekly Recap's AI blurb and, eventually, Smart Search.
+// Mirrors the football archive's callClaude() pattern exactly.
+async function callClaude(systemPrompt, userMessage){
+  if(!CLAUDE_WORKER_URL || CLAUDE_WORKER_URL.includes('YOUR-WORKER')){
+    throw new Error('This AI feature isn\u2019t configured yet — deploy a Claude proxy Worker, then paste its URL into CLAUDE_WORKER_URL.');
+  }
+  const resp = await fetch(CLAUDE_WORKER_URL, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({system: systemPrompt, message: userMessage})
+  });
+  if(!resp.ok){
+    const err = await resp.json().catch(()=>({}));
+    throw new Error(err.error || `Worker error ${resp.status}`);
+  }
+  const data = await resp.json();
+  return data.content || data.text || JSON.stringify(data);
+}
+
 async function loadAllDraftPicks(){
   const years = Object.keys(ROOKIE_DRAFT_IDS).map(Number);
   const results = await Promise.all(years.map(y => apiFetch(`/draft/${ROOKIE_DRAFT_IDS[y]}/picks`).catch(()=>[])));
@@ -1126,6 +1289,8 @@ function renderYearChips(containerId, onSelect, selectedYear){
 // baked into their panel by renderContentShell(), so there's nothing to dispatch to.
 const RENDER_FNS = {
   dashboard: renderDashboard,
+  recap: renderRecapPanel,
+  tutorial: renderTutorial,
   mytimeline: renderMyTimeline,
   playerscoring: renderPlayersPanel,
   standings: renderStandings,
@@ -1204,6 +1369,34 @@ function renderDashboard(){
   const el = document.getElementById('dashboard-body');
   const year = DB.selectedSeason;
   const champ = FINAL_STANDINGS[year];
+
+  // "My Season" card — only shows if we recognized a signed-in manager
+  let myCardHTML = '';
+  if(DB.myManagerKey){
+    const mySeason = DB.seasons[year];
+    const myTeam = mySeason ? (mySeason.teams || []).find(t => t.managerKey === DB.myManagerKey) : null;
+    const myName = (getManager(DB.myManagerKey) || {}).name || DB.myManagerKey;
+    if(myTeam){
+      const ranked = [...(mySeason.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
+      const myRank = ranked.findIndex(t => t.managerKey === DB.myManagerKey) + 1;
+      myCardHTML = `
+        <div class="card" style="border-color:var(--accent-dim);">
+          <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Your ${seasonLabel(year)}</div>
+          <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">${myTeam.wins}\u2013${myTeam.losses}</div>
+          <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">#${myRank} of 12 \u00b7 ${myTeam.pf.toFixed(0)} PF</div>
+        </div>`;
+    } else {
+      myCardHTML = `
+        <div class="card">
+          <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Welcome</div>
+          <div style="font-size:16px;font-weight:700;">${myName}</div>
+          <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">No roster found for ${seasonLabel(year)}</div>
+        </div>`;
+    }
+  }
+
+  const insights = DB.loaded ? generateInsights() : [];
+
   el.innerHTML = `
     <div class="card-grid">
       <div class="card">
@@ -1220,11 +1413,229 @@ function renderDashboard(){
         <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">12 Managers</div>
         <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">Active since ${seasonLabel(FIRST_SEASON)}</div>
       </div>
+      ${myCardHTML}
     </div>
     <div id="dashboard-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 14px;"></div>
-    <div class="empty-state"><i class="ti ti-sparkles"></i>Automated insights, recent activity, and matchup recaps arrive in Phase 1.</div>
+
+    <h3 style="margin-bottom:12px;">Automated Insights</h3>
+    ${insights.length ? `
+      <div class="card-grid">
+        ${insights.map(c => `
+          <div class="card">
+            <div style="color:var(--accent);font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px;">${c.label}</div>
+            <div style="font-size:13px;line-height:1.5;color:var(--text-dim);">${c.text}</div>
+          </div>`).join('')}
+      </div>` : `
+      <div class="empty-state"><i class="ti ti-sparkles"></i>${DB.loaded ? 'No data loaded yet.' : 'Insights populate once the archive finishes loading.'}</div>`}
   `;
   renderYearChips('dashboard-yr-chips', (y)=>{ DB.selectedSeason = y; renderDashboard(); }, year);
+}
+
+/* ============================================================
+   WEEKLY RECAP
+   Season + week picker, matchup results for that week, POTG/POTW,
+   and an AI-generated narrative blurb (via callClaude, not yet configured).
+   Regular season only — matchupsByWeek was loaded with only regular-season
+   weeks, so playoff weeks never appear in the picker.
+   ============================================================ */
+function renderRecapPanel(){
+  const el = document.getElementById('recap-body');
+  const years = Object.keys(DB.seasons).map(Number).sort((a,b)=>b-a);
+  el.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+      <select id="recap-yr-sel" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+        <option value="">Season\u2026</option>
+        ${years.map(y => `<option value="${y}">${seasonLabel(y)}</option>`).join('')}
+      </select>
+      <select id="recap-wk-sel" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+        <option value="">Week\u2026</option>
+      </select>
+    </div>
+    <div id="recap-card"><div class="empty-state"><i class="ti ti-notebook"></i>Select a season and week above.</div></div>
+  `;
+  document.getElementById('recap-yr-sel').addEventListener('change', onRecapYearChange);
+  document.getElementById('recap-wk-sel').addEventListener('change', renderRecapFor);
+}
+
+function onRecapYearChange(){
+  const yr = document.getElementById('recap-yr-sel').value;
+  const wkSel = document.getElementById('recap-wk-sel');
+  if(!yr){ wkSel.innerHTML = `<option value="">Week\u2026</option>`; return; }
+  const season = DB.seasons[yr];
+  if(!season) return;
+  const weeks = Object.keys(season.matchupsByWeek).map(Number).sort((a,b)=>a-b);
+  wkSel.innerHTML = `<option value="">Week\u2026</option>` + weeks.map(w => `<option value="${w}">Week ${w}</option>`).join('');
+  document.getElementById('recap-card').innerHTML = `<div class="empty-state"><i class="ti ti-notebook"></i>Select a week above.</div>`;
+}
+
+function renderRecapFor(){
+  const yr = Number(document.getElementById('recap-yr-sel').value);
+  const wk = Number(document.getElementById('recap-wk-sel').value);
+  const card = document.getElementById('recap-card');
+  if(!yr || !wk){ card.innerHTML = `<div class="empty-state"><i class="ti ti-notebook"></i>Select a season and week above.</div>`; return; }
+
+  const season = DB.seasons[yr];
+  const mus = (season && season.matchupsByWeek[wk]) || [];
+  if(!mus.length){ card.innerHTML = `<div class="empty-state"><i class="ti ti-notebook"></i>No matchup data for this week.</div>`; return; }
+
+  const byId = {};
+  mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
+  const pairs = Object.values(byId).filter(p => p.length >= 2);
+
+  const results = pairs.map(([a,b]) => {
+    const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
+    const pa = a.points || 0, pb = b.points || 0;
+    const aWon = pa >= pb;
+    const winnerKey = aWon ? ka : kb, loserKey = aWon ? kb : ka;
+    const wPts = aWon ? pa : pb, lPts = aWon ? pb : pa;
+    const h2h = computeAllTimeH2H(winnerKey, loserKey);
+    return {winnerKey, loserKey, wPts, lPts, wWins:h2h.w1, lWins:h2h.w2, total:wPts+lPts};
+  }).sort((a,b) => b.total - a.total);
+
+  // POTG per matchup + POTW for the week, using our confirmed tie rules via computePotgData
+  const weekLog = computePotgData(yr).filter(e => e.week === wk);
+  const potgList = weekLog; // every entry is a POTG; POTW-typed ones are also POTG (possibly shared)
+  const potwEntries = weekLog.filter(e => e.type === 'POTW');
+  const allLog = computePotgData('all');
+  const getPotgCount = pid => allLog.filter(e => e.pid === pid).length;
+  const getPotwCount = pid => allLog.filter(e => e.pid === pid && e.type === 'POTW').length;
+
+  const standingRows = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
+
+  card.innerHTML = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:14px;">
+        <div>
+          <h3 style="margin-bottom:2px;">Docile Archive Weekly</h3>
+          <div style="color:var(--text-dim);font-size:12.5px;">${seasonLabel(yr)} \u00b7 Week ${wk}</div>
+        </div>
+        <button onclick="generateRecapBlurb(${yr},${wk})" style="padding:7px 12px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-hover);color:var(--text-dim);font-size:12px;cursor:pointer;">
+          <i class="ti ti-sparkles"></i> Generate blurb
+        </button>
+      </div>
+      <div id="recap-blurb" style="font-style:italic;color:var(--text-faint);font-size:13px;margin-bottom:18px;"></div>
+
+      <div style="margin-bottom:18px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:8px;">Results</div>
+        ${results.map(r => `
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-soft);font-size:13px;">
+            <span><strong>${getManagerDisplay(r.winnerKey, yr)}</strong> def. ${getManagerDisplay(r.loserKey, yr)}</span>
+            <span style="display:flex;align-items:center;gap:10px;">
+              <span style="font-family:var(--font-mono);">${r.wPts.toFixed(2)}\u2013${r.lPts.toFixed(2)}</span>
+              <span style="color:var(--text-faint);font-size:11.5px;">(${r.wWins}\u2013${r.lWins} all-time)</span>
+            </span>
+          </div>`).join('')}
+      </div>
+
+      <div style="margin-bottom:18px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:8px;">Player of the Week</div>
+        ${potwEntries.length ? potwEntries.map(p => `
+          <div style="display:flex;align-items:center;gap:10px;padding:8px 0;">
+            <span class="trophy-chip"><i class="ti ti-star"></i>POTW</span>
+            <div style="flex:1;">
+              <div style="font-weight:600;"><a href="#" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</a></div>
+              <div style="color:var(--text-faint);font-size:11.5px;">${getManagerDisplay(p.managerKey, yr)} \u00b7 ${getPotwCount(p.pid)}${ordinal(getPotwCount(p.pid))} career POTW \u00b7 ${getPotgCount(p.pid)}${ordinal(getPotgCount(p.pid))} career POTG</div>
+            </div>
+            <span style="font-family:var(--font-mono);font-weight:700;">${p.pts.toFixed(1)}</span>
+          </div>`).join('') : `<div style="color:var(--text-faint);font-size:12.5px;">No data</div>`}
+      </div>
+
+      <div style="margin-bottom:18px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:8px;">Players of the Game</div>
+        ${potgList.map(p => `
+          <div style="display:flex;align-items:center;gap:10px;padding:6px 0;">
+            <span class="pos-badge pos-multi" style="min-width:34px;">${p.type==='POTW'?'\u2605':'POTG'}</span>
+            <div style="flex:1;">
+              <div>${(DB.playerMeta[p.pid]||{}).name||p.pid}</div>
+              <div style="color:var(--text-faint);font-size:11px;">${getManagerDisplay(p.managerKey, yr)} \u00b7 ${getPotgCount(p.pid)}${ordinal(getPotgCount(p.pid))} career POTG</div>
+            </div>
+            <span style="font-family:var(--font-mono);">${p.pts.toFixed(1)}</span>
+          </div>`).join('')}
+      </div>
+
+      <div>
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:8px;">Season Standings</div>
+        ${standingRows.map((t,i) => `
+          <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px;">
+            <span style="color:var(--text-faint);width:20px;">${i+1}</span>
+            <span style="flex:1;${t.managerKey===DB.myManagerKey?'font-weight:700;':''}">${getManagerDisplay(t.managerKey, yr)}</span>
+            <span style="font-family:var(--font-mono);color:var(--text-dim);">${t.wins}\u2013${t.losses}</span>
+            <span style="font-family:var(--font-mono);color:var(--text-faint);font-size:11px;">${t.pf.toFixed(1)} pts</span>
+          </div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+async function generateRecapBlurb(yr, wk){
+  const el = document.getElementById('recap-blurb');
+  el.textContent = 'Generating\u2026';
+  try{
+    const summary = `${LEAGUE_NAME}, ${seasonLabel(yr)} Week ${wk}.`;
+    const text = await callClaude(
+      'You are a witty fantasy basketball recap writer. Write 2-3 sentences.',
+      summary
+    );
+    el.textContent = text;
+  }catch(e){
+    el.textContent = e.message;
+  }
+}
+
+/* ============================================================
+   ARCHIVE TUTORIAL
+   Generated directly from NAV_GROUPS/SEARCH_PAGE rather than a parallel
+   hardcoded description list — the tutorial can never drift out of sync
+   with the actual nav, since it reads the same config the sidebar does.
+   ============================================================ */
+const TUTORIAL_GROUP_META = {
+  home:   {icon:'ti-home',           color:'var(--accent)'},
+  myteam: {icon:'ti-shirt-sport',    color:'var(--good)'},
+  league: {icon:'ti-trophy',         color:'var(--gold)'}
+};
+
+function renderTutorial(){
+  const el = document.getElementById('tutorial-body');
+  const groups = NAV_GROUPS.map(g => ({...g, meta: TUTORIAL_GROUP_META[g.key] || {icon:'ti-apps', color:'var(--text-dim)'}}));
+
+  el.innerHTML = `
+    <p style="color:var(--text-dim);font-size:13px;line-height:1.6;max-width:640px;margin-bottom:20px;">
+      The Docile Basketball Fellowship archive pulls live data from Sleeper and combines it with hand-curated league history going back to ${seasonLabel(FIRST_SEASON)}. Here's what you can explore:
+    </p>
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      ${groups.map(g => `
+        <div class="card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <div style="width:32px;height:32px;border-radius:8px;background:var(--bg-hover);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+              <i class="ti ${g.meta.icon}" style="font-size:16px;color:${g.meta.color};"></i>
+            </div>
+            <div style="font-weight:700;font-family:var(--font-display);font-size:15px;">${g.label}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;">
+            ${g.pages.map(p => `
+              <div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:9px 12px;">
+                <div style="font-size:12.5px;font-weight:600;margin-bottom:2px;display:flex;align-items:center;gap:6px;">
+                  ${p.label}
+                  ${p.ready ? '' : '<span style="color:var(--text-faint);font-size:9.5px;font-weight:400;text-transform:uppercase;">soon</span>'}
+                </div>
+                <div style="font-size:11.5px;color:var(--text-faint);line-height:1.4;">${p.desc}</div>
+              </div>`).join('')}
+          </div>
+        </div>`).join('')}
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+          <div style="width:32px;height:32px;border-radius:8px;background:var(--bg-hover);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+            <i class="ti ${SEARCH_PAGE.icon}" style="font-size:16px;color:var(--text-dim);"></i>
+          </div>
+          <div style="font-weight:700;font-family:var(--font-display);font-size:15px;">${SEARCH_PAGE.label}</div>
+        </div>
+        <div style="font-size:12.5px;color:var(--text-dim);">${SEARCH_PAGE.desc} Not yet connected to Claude \u2014 coming in a later phase.</div>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding:10px 14px;background:var(--bg-panel);border-radius:var(--radius-sm);font-size:11.5px;color:var(--text-faint);line-height:1.6;">
+      <strong style="color:var(--text-dim);">Data sources:</strong> Live Sleeper API \u00b7 Hand-curated managers, team names, and champions \u00b7 Rookie draft picks via Sleeper draft IDs. Lineup-only, regular-season-only scoring throughout.
+    </div>
+  `;
 }
 
 function renderMyTimeline(){
