@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Docile Basketball Fellowship — Archive</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   ============================================================ */
+:root{
+  --bg:#0b0d10;
+  --bg-elevated:#12151a;
+  --bg-panel:#161a20;
+  --bg-hover:#1d222a;
+  --border:#232830;
+  --border-soft:#1a1e24;
+  --text:#e7e9ec;
+  --text-dim:#9aa2ad;
+  --text-faint:#5f6772;
+
+  --accent:#e8823a;       /* fellowship orange — signature color */
+  --accent-dim:#c96b28;
+  --accent-soft:rgba(232,130,58,0.14);
+
+  --gold:#d8b04a;         /* champion trophy gold */
+  --good:#3fb673;
+  --bad:#d9534f;
+
+  /* position colors */
+  --pos-pg:#e0503f;
+  --pos-sg:#e08a2f;
+  --pos-sf:#3fae5c;
+  --pos-pf:#3f83c9;
+  --pos-c:#9a5fc9;
+
+  --radius-sm:6px;
+  --radius-md:10px;
+  --radius-lg:16px;
+
+  --font-display:'Rajdhani','Segoe UI',sans-serif;
+  --font-body:'Inter','Segoe UI',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono','Consolas',monospace;
+
+  --sidebar-w:230px;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-body);
+  font-size:14px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--accent);text-decoration:none;}
+h1,h2,h3,h4{font-family:var(--font-display);font-weight:700;letter-spacing:.02em;margin:0 0 .5em;}
+button{font-family:inherit;cursor:pointer;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* ============================================================
+   LAYOUT SHELL
+   ============================================================ */
+#app{display:flex;min-height:100vh;}
+
+/* --- Desktop sidebar --- */
+#sidebar{
+  width:var(--sidebar-w);
+  flex-shrink:0;
+  background:var(--bg-elevated);
+  border-right:1px solid var(--border-soft);
+  display:flex;
+  flex-direction:column;
+  position:sticky;
+  top:0;
+  height:100vh;
+  overflow-y:auto;
+}
+#sidebar .brand{
+  padding:20px 18px 16px;
+  border-bottom:1px solid var(--border-soft);
+}
+#sidebar .brand .mark{
+  font-family:var(--font-display);
+  font-size:17px;
+  font-weight:700;
+  color:var(--text);
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+#sidebar .brand .mark i{color:var(--accent);font-size:20px;}
+#sidebar .brand .sub{font-size:11px;color:var(--text-faint);margin-top:3px;letter-spacing:.04em;text-transform:uppercase;}
+
+.nav-section{padding:14px 10px 4px;}
+.nav-section .nav-label{
+  font-size:10.5px;
+  text-transform:uppercase;
+  letter-spacing:.09em;
+  color:var(--text-faint);
+  padding:0 10px 6px;
+  font-weight:600;
+}
+.nav-item{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;
+  border-radius:var(--radius-sm);
+  color:var(--text-dim);
+  font-size:13.5px;
+  cursor:pointer;
+  transition:background .12s,color .12s;
+  white-space:nowrap;
+}
+.nav-item i{font-size:17px;width:18px;text-align:center;flex-shrink:0;}
+.nav-item:hover{background:var(--bg-hover);color:var(--text);}
+.nav-item.active{background:var(--accent-soft);color:var(--accent);}
+
+/* --- Main content --- */
+#main{flex:1;min-width:0;display:flex;flex-direction:column;}
+#topbar{
+  display:none;
+  padding:14px 20px;
+  border-bottom:1px solid var(--border-soft);
+  align-items:center;
+  justify-content:space-between;
+}
+#content{flex:1;padding:24px 28px 100px;max-width:1400px;width:100%;margin:0 auto;}
+
+.panel{display:none;}
+.panel.active{display:block;animation:fadeIn .18s ease;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+
+.panel-header{margin-bottom:20px;}
+.panel-header h1{font-size:24px;}
+.panel-header .desc{color:var(--text-dim);font-size:13px;}
+
+/* --- Bottom nav (mobile) --- */
+#bottomnav{
+  display:none;
+  position:fixed;bottom:0;left:0;right:0;
+  background:var(--bg-elevated);
+  border-top:1px solid var(--border-soft);
+  z-index:50;
+}
+#bottomnav .bn-main{
+  display:flex;
+}
+#bottomnav .bn-item{
+  flex:1;
+  display:flex;flex-direction:column;align-items:center;gap:2px;
+  padding:8px 0 6px;
+  color:var(--text-faint);
+  font-size:10px;
+}
+#bottomnav .bn-item i{font-size:20px;}
+#bottomnav .bn-item.active{color:var(--accent);}
+#bottomnav .bn-subrow{
+  display:flex;
+  gap:8px;
+  padding:8px 12px;
+  overflow-x:auto;
+  border-top:1px solid var(--border-soft);
+}
+.yr-chip{
+  flex-shrink:0;
+  padding:6px 12px;
+  border-radius:999px;
+  background:var(--bg-panel);
+  border:1px solid var(--border);
+  color:var(--text-dim);
+  font-size:12px;
+  font-weight:600;
+  white-space:nowrap;
+  cursor:pointer;
+  transition:all .12s;
+}
+.yr-chip.active{background:var(--accent);border-color:var(--accent);color:#1a0f05;}
+.yr-chip:hover:not(.active){border-color:var(--accent-dim);color:var(--text);}
+
+/* ============================================================
+   SHARED COMPONENTS
+   ============================================================ */
+.card{
+  background:var(--bg-panel);
+  border:1px solid var(--border-soft);
+  border-radius:var(--radius-md);
+  padding:16px;
+}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;}
+
+table.data-table{width:100%;border-collapse:collapse;font-size:13px;}
+table.data-table th{
+  text-align:left;
+  padding:9px 10px;
+  color:var(--text-faint);
+  font-size:11px;
+  text-transform:uppercase;
+  letter-spacing:.05em;
+  border-bottom:1px solid var(--border);
+  cursor:pointer;
+  user-select:none;
+  white-space:nowrap;
+}
+table.data-table th:hover{color:var(--text);}
+table.data-table th .sort-arrow{opacity:.4;margin-left:3px;font-size:10px;}
+table.data-table th.sorted .sort-arrow{opacity:1;color:var(--accent);}
+table.data-table td{padding:9px 10px;border-bottom:1px solid var(--border-soft);}
+table.data-table tbody tr:hover{background:var(--bg-hover);}
+
+/* position badges */
+.pos-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  min-width:26px;height:20px;padding:0 6px;
+  border-radius:5px;
+  font-size:10.5px;font-weight:700;letter-spacing:.02em;
+  color:#0b0d10;
+}
+.pos-badge.pos-pg{background:var(--pos-pg);}
+.pos-badge.pos-sg{background:var(--pos-sg);}
+.pos-badge.pos-sf{background:var(--pos-sf);}
+.pos-badge.pos-pf{background:var(--pos-pf);}
+.pos-badge.pos-c{background:var(--pos-c);}
+.pos-badge.pos-split{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5);}
+.pos-badge.pos-multi{background:var(--bg-hover);color:var(--text-dim);border:1px solid var(--border);}
+
+.trophy-chip{
+  display:inline-flex;align-items:center;gap:5px;
+  background:rgba(216,176,74,0.12);
+  border:1px solid rgba(216,176,74,0.35);
+  color:var(--gold);
+  padding:3px 9px;
+  border-radius:999px;
+  font-size:11.5px;
+  font-weight:600;
+}
+.trophy-chip i{font-size:13px;}
+
+.empty-state{
+  text-align:center;
+  padding:50px 20px;
+  color:var(--text-faint);
+}
+.empty-state i{font-size:34px;display:block;margin-bottom:10px;opacity:.5;}
+
+.loading-state{
+  text-align:center;padding:40px;color:var(--text-faint);font-size:13px;
+}
+
+/* Modal */
+#modal-overlay{
+  display:none;
+  position:fixed;inset:0;
+  background:rgba(0,0,0,.6);
+  z-index:100;
+  align-items:flex-start;
+  justify-content:center;
+  padding:40px 16px;
+  overflow-y:auto;
+}
+#modal-overlay.active{display:flex;}
+#modal-box{
+  background:var(--bg-elevated);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  max-width:640px;width:100%;
+  padding:22px;
+  position:relative;
+}
+#modal-close{
+  position:absolute;top:14px;right:14px;
+  background:var(--bg-hover);border:1px solid var(--border);
+  width:30px;height:30px;border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  color:var(--text-dim);
+}
+#modal-close:hover{color:var(--text);}
+
+/* Responsive */
+@media (max-width:880px){
+  #sidebar{display:none;}
+  #topbar{display:flex;}
+  #content{padding:16px 16px 140px;}
+  #bottomnav{display:block;}
+}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- ===================== DESKTOP SIDEBAR ===================== -->
+  <nav id="sidebar">
+    <div class="brand">
+      <div class="mark"><i class="ti ti-ball-basketball"></i>Docile Fellowship</div>
+      <div class="sub">Season Archive</div>
+    </div>
+    <div id="sidebar-nav"></div>
+  </nav>
+
+  <!-- ===================== MAIN ===================== -->
+  <div id="main">
+    <div id="topbar">
+      <div class="mark" style="display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-weight:700;font-size:16px;">
+        <i class="ti ti-ball-basketball" style="color:var(--accent);"></i>Docile Fellowship
+      </div>
+    </div>
+
+    <div id="content">
+      <div id="panel-home" class="panel">
+        <div class="panel-header">
+          <h1>Home</h1>
+          <div class="desc">League overview, current standings, and recent activity.</div>
+        </div>
+        <div id="home-body"></div>
+      </div>
+
+      <div id="panel-myteam" class="panel">
+        <div class="panel-header">
+          <h1>My Team</h1>
+          <div class="desc">Roster, lineup history, and manager stats.</div>
+        </div>
+        <div id="myteam-body"></div>
+      </div>
+
+      <div id="panel-league" class="panel">
+        <div class="panel-header">
+          <h1>League</h1>
+          <div class="desc">Standings, draft history, and Fellowship-wide records.</div>
+        </div>
+        <div id="league-body"></div>
+      </div>
+
+      <div id="panel-draft" class="panel">
+        <div class="panel-header">
+          <h1>Draft History</h1>
+          <div class="desc">Every pick, every season.</div>
+        </div>
+        <div id="draft-body"></div>
+      </div>
+
+      <div id="panel-alldocile" class="panel">
+        <div class="panel-header">
+          <h1>All-Docile &amp; All-Rookie Teams</h1>
+          <div class="desc">Season honor teams built from starting-lineup scoring only.</div>
+        </div>
+        <div id="alldocile-body"></div>
+      </div>
+
+      <div id="panel-awards" class="panel">
+        <div class="panel-header">
+          <h1>POTG / POTW</h1>
+          <div class="desc">Player of the Game and Player of the Week, regular season only.</div>
+        </div>
+        <div id="awards-body"></div>
+      </div>
+
+      <div id="panel-search" class="panel">
+        <div class="panel-header">
+          <h1>Player Search</h1>
+          <div class="desc">Find any player who has appeared in the Fellowship.</div>
+        </div>
+        <div id="search-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MOBILE BOTTOM NAV ===================== -->
+<div id="bottomnav">
+  <div class="bn-subrow" id="bn-subrow" style="display:none;"></div>
+  <div class="bn-main" id="bn-main"></div>
+</div>
+
+<!-- ===================== PLAYER MODAL ===================== -->
+<div id="modal-overlay">
+  <div id="modal-box">
+    <div id="modal-close"><i class="ti ti-x"></i></div>
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+/* ============================================================
+   CONFIG
+   ============================================================ */
+// TODO: point this at your Cloudflare Worker proxy for the Sleeper API
+const CF_WORKER_URL = 'https://sleeper-proxy.YOUR-WORKER.workers.dev';
+const SNAPSHOT_BASE = ''; // e.g. '/snapshots' or full GH Pages path; filled in when snapshots exist
+
+/* ============================================================
+   LEAGUE CONSTANTS
+   Source of truth confirmed in-thread. Year key = season START year
+   (e.g. 2020 = the 2020-21 season) per Sleeper's own convention.
+   ============================================================ */
+const LEAGUE_NAME = 'Docile Basketball Fellowship';
+const FIRST_SEASON = 2020;
+const CURRENT_SEASON = 2026; // pre-draft as of build time
+
+function seasonLabel(year){ return `${year}-${String(year+1).slice(2)}`; } // 2020 -> "2020-21"
+
+const LEAGUE_IDS = {
+  2020:'546132191375867904',
+  2021:'695360428028559360',
+  2022:'816758693004685312',
+  2023:'949752238795329536',
+  2024:'1083134044205830144',
+  2025:'1215077379504873472',
+  2026:'1372269741191733248'
+};
+
+const STARTUP_DRAFT_ID = '641484830877605888'; // 2020 startup draft
+
+const ROOKIE_DRAFT_IDS = {
+  2021:'695360428028559361',
+  2022:'816758693004685313',
+  2023:'949752238795329537',
+  2024:'1083134044205830145',
+  2025:'1215077379509059584',
+  2026:'1372269741195919360'
+};
+
+// Full starting lineup, in the order used to fill All-Docile/All-Rookie teams (see FLEX_FILL_ORDER below)
+const LINEUP_SLOTS = ['PG','SG','G','SF','PF','F','C','UTIL','UTIL','UTIL'];
+const TRUE_POSITIONS = ['PG','SG','SF','PF','C'];
+
+// which true positions satisfy which flex slot
+const SLOT_ELIGIBILITY = {
+  PG:['PG'], SG:['SG'], SF:['SF'], PF:['PF'], C:['C'],
+  G:['PG','SG'],
+  F:['SF','PF'],
+  UTIL:['PG','SG','SF','PF','C']
+};
+
+const POSITION_COLORS = {
+  PG:'--pos-pg', SG:'--pos-sg', SF:'--pos-sf', PF:'--pos-pf', C:'--pos-c'
+};
+
+// Manager roster: canonical key is the Sleeper username used from 2021 onward
+// (or the only username, if they never changed). years[] = season-start years played.
+const MANAGERS = {
+  Goodmjim:      {name:'Jimmy',   years:[2020,2021,2022,2023,2024,2025,2026]},
+  boonefisher:   {name:'Boone',   years:[2020,2021,2022,2023,2024,2025,2026]},
+  amol97:        {name:'Amol',    years:[2020,2021,2022,2023,2024,2025,2026]},
+  kellykyl:      {name:'Kyle',    years:[2020,2021,2022,2023,2024,2025,2026]},
+  CarlCanary:    {name:'Jared',   years:[2020,2021,2022,2023,2024,2025,2026]},
+  KennethGoulet: {name:'Declan',  years:[2020,2021,2022,2023,2024,2025,2026]},
+  karpmcol:      {name:'Hinton',  years:[2020,2021,2022,2023,2024,2025,2026]},
+  bukkaabh:      {name:'Abhi',    years:[2020,2021,2022,2023,2024,2025,2026]},
+  JohnCarey:     {name:'John',    years:[2020,2021,2022,2023,2024,2025,2026]},
+  DHalp:         {name:'Sting',   years:[2020,2021,2022,2023,2024,2025,2026]},
+  turkmommy:     {name:'Jon',     years:[2020,2021,2022]},
+  tlynn99:       {name:'Tyler',   years:[2022,2023,2024,2025,2026]},
+  lanceesposito: {name:'Lance',   years:[2020,2021,2022]},
+  sdenniso:      {name:'Stanley', years:[2023,2024]},
+  Dfletch22:     {name:'David',   years:[2025,2026]}
+};
+
+// Sleeper username aliases -> canonical MANAGERS key. Resolve at user-fetch time.
+const USERNAME_ALIASES = { GelEBeans:'CarlCanary' }; // Jared used GelEBeans only in 2020
+
+// Team name eras per manager. Each entry's years[] are the season-start years that name was active.
+const TEAM_NAMES = {
+  Goodmjim:      [{name:'Queen Latifahs Last Stand', years:[2020,2021,2022,2023,2024,2025]}],
+  boonefisher:   [{name:'The Rude Boys', years:[2020,2021,2022,2023,2024,2025]}],
+  amol97:        [{name:'Team amol97', years:[2020,2021,2022,2023,2024,2025]}],
+  kellykyl:      [
+    {name:'Team kellykyl', years:[2020,2021,2022]},
+    {name:'The Sting Slayer', years:[2023,2024,2025]}
+  ],
+  CarlCanary:    [
+    {name:'Automatic', years:[2020,2021,2022,2023,2024]},
+    {name:'Sharketball', years:[2025]}
+  ],
+  KennethGoulet: [{name:'Big Baller Brand', years:[2020,2021,2022,2023,2024,2025]}],
+  karpmcol:      [
+    {name:'The Double Entendres', years:[2020,2021]},
+    {name:"Boone's Daddies", years:[2022,2023]},
+    {name:'Yakima Fighting Cuckolds', years:[2024,2025]}
+  ],
+  bukkaabh:      [{name:'Team Bukkapatnam', years:[2020,2021,2022,2023,2024,2025]}],
+  tlynn99:       [{name:'Team Jew', years:[2022,2023,2024,2025]}],
+  Dfletch22:     [{name:'Under New Management', years:[2025]}],
+  JohnCarey:     [{name:'Pass the Bol', years:[2020,2021,2022,2023,2024,2025]}],
+  DHalp:         [
+    {name:'Sting King (King of Sting)', years:[2020]},
+    {name:'Sting Dynasty', years:[2021,2022,2023,2024]},
+    {name:'Declan Farmer FC', years:[2025]}
+  ],
+  lanceesposito: [{name:'Team lanceesposito', years:[2020,2021,2022]}],
+  sdenniso:      [{name:'Team sdenniso', years:[2023,2024]}],
+  turkmommy:     [{name:'Team turkmommy', years:[2020,2021,2022]}]
+};
+
+// Only trophy currently tracked. Playoff results otherwise excluded from all player stat tracking.
+const FINAL_STANDINGS = {
+  2020:{champion:'DHalp'},
+  2021:{champion:'DHalp'},
+  2022:{champion:'Goodmjim'},
+  2023:{champion:'Goodmjim'},
+  2024:{champion:'Goodmjim'},
+  2025:{champion:'Goodmjim'}
+};
+
+/* ============================================================
+   LINEUP SCORING EXTRACTION
+   Critical constraint: we track points scored WHILE IN A STARTING LINEUP SLOT,
+   never total fantasy points scored across the season, and NEVER playoff weeks.
+   Sleeper's "starters_points" array is aligned index-for-index with "starters",
+   and slot order follows the league's own roster_positions (non-bench) — we map
+   against that rather than assuming LINEUP_SLOTS in case a season's order differs.
+   ============================================================ */
+function getStartingSlotOrder(season){
+  const rp = (season.league.roster_positions || []).filter(p => TRUE_POSITIONS.includes(p) || ['G','F','UTIL'].includes(p));
+  return rp.length ? rp : LINEUP_SLOTS;
+}
+
+function buildWeeklyLineupScores(year){
+  const season = DB.seasons[year];
+  if(!season) return;
+  const slotOrder = getStartingSlotOrder(season);
+  DB.allStarters[year] = {};
+
+  Object.keys(season.matchupsByWeek).forEach(weekStr => {
+    const week = Number(weekStr);
+    const entries = season.matchupsByWeek[week] || [];
+    const out = [];
+    entries.forEach(entry => {
+      const managerKey = season.rosterIdToManagerKey[entry.roster_id];
+      const starters = entry.starters || [];
+      const startersPoints = entry.starters_points || starters.map(pid => (entry.players_points||{})[pid] || 0);
+      starters.forEach((pid,i) => {
+        if(!pid || pid === '0') return; // empty slot
+        out.push({
+          pid,
+          points: startersPoints[i] || 0,
+          rosterId: entry.roster_id,
+          managerKey,
+          slot: slotOrder[i] || 'UTIL',
+          matchupId: entry.matchup_id,
+          teamTotal: entry.points
+        });
+      });
+    });
+    DB.allStarters[year][week] = out;
+  });
+}
+
+/* ============================================================
+   POTG / POTW
+   Rules confirmed in-thread:
+   - 6 POTG/week (1 per matchup), regardless of win/loss.
+   - Tie within a matchup -> winning team's player gets it.
+   - Tie within a matchup AND both tied players on the winning team -> first in Sleeper's data order.
+   - POTW = single highest score among the week's POTGs; ties at that top score are SHARED (no winner-team preference at this level).
+   - Regular season only (playoff weeks were never loaded into DB.allStarters).
+   ============================================================ */
+function computeWeeklyAwards(year){
+  const weeks = DB.allStarters[year] || {};
+  DB.awards.potg[year] = {};
+  DB.awards.potw[year] = {};
+
+  Object.keys(weeks).forEach(weekStr => {
+    const week = Number(weekStr);
+    const starters = weeks[week];
+    // group by matchupId
+    const byMatchup = {};
+    starters.forEach(s => {
+      if(!byMatchup[s.matchupId]) byMatchup[s.matchupId] = [];
+      byMatchup[s.matchupId].push(s);
+    });
+
+    const potgList = [];
+    Object.values(byMatchup).forEach(group => {
+      if(!group.length) return;
+      // which rosterId won this matchup
+      const rosterTotals = {};
+      group.forEach(s => { rosterTotals[s.rosterId] = s.teamTotal; });
+      const rosterIds = Object.keys(rosterTotals);
+      const winningRosterId = rosterIds.length === 2
+        ? (rosterTotals[rosterIds[0]] >= rosterTotals[rosterIds[1]] ? rosterIds[0] : rosterIds[1])
+        : rosterIds[0];
+
+      const maxScore = Math.max(...group.map(s => s.points));
+      let tied = group.filter(s => s.points === maxScore);
+      if(tied.length > 1){
+        const onWinningTeam = tied.filter(s => String(s.rosterId) === String(winningRosterId));
+        tied = onWinningTeam.length ? [onWinningTeam[0]] : [tied[0]]; // first-in-data-order fallback
+      }
+      potgList.push(tied[0]);
+    });
+
+    DB.awards.potg[year][week] = potgList;
+
+    // POTW: highest score among this week's POTGs, shared on exact ties
+    if(potgList.length){
+      const topScore = Math.max(...potgList.map(p => p.points));
+      DB.awards.potw[year][week] = potgList.filter(p => p.points === topScore);
+    }else{
+      DB.awards.potw[year][week] = [];
+    }
+  });
+}
+
+/* ============================================================
+   ALL-DOCILE / ALL-ROOKIE TEAM CONSTRUCTION
+   Deterministic scarcity-fill (not a true optimal assignment solve) — chosen for
+   transparency: rarest-eligibility slot fills first so a highest scorer is never
+   blocked out by a flex slot absorbing them earlier. See in-thread discussion.
+   Season totals = sum of STARTER points only, regular season only.
+   ============================================================ */
+const FLEX_FILL_ORDER = ['C','PF','SF','PG','SG','F','G','UTIL','UTIL','UTIL'];
+const ROOKIE_FILL_ORDER = ['C','PF','SF','PG','SG'];
+
+function computeSeasonTotals(year){
+  const weeks = DB.allStarters[year] || {};
+  const totals = {}; // pid -> points
+  Object.values(weeks).forEach(list => {
+    list.forEach(s => { totals[s.pid] = (totals[s.pid]||0) + s.points; });
+  });
+  return totals;
+}
+
+function getPlayerPositions(pid, year){
+  const meta = DB.playerMeta[pid];
+  if(!meta) return [];
+  return meta.positionsBySeasonYear[year] || meta.positionsBySeasonYear[CURRENT_SEASON] || [];
+}
+
+function isEligibleForSlot(pid, slot, year){
+  const positions = getPlayerPositions(pid, year);
+  return positions.some(p => SLOT_ELIGIBILITY[slot].includes(p));
+}
+
+// resolves which single true-position color/label to credit a player with when placed in a flex slot,
+// preferring the position that actually satisfies that slot
+function resolvePositionForSlot(pid, slot, year){
+  const positions = getPlayerPositions(pid, year);
+  const match = positions.find(p => SLOT_ELIGIBILITY[slot].includes(p));
+  return match || positions[0] || slot;
+}
+
+function buildAllDocileTeams(year){
+  const totals = computeSeasonTotals(year);
+  let pool = Object.keys(totals)
+    .filter(pid => totals[pid] > 0)
+    .sort((a,b) => totals[b]-totals[a]);
+
+  const teams = {};
+  [1,2,3].forEach(teamNum => {
+    const roster = [];
+    FLEX_FILL_ORDER.forEach(slot => {
+      const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, year));
+      if(idx === -1){ roster.push({slot, pid:null, points:0}); return; }
+      const pid = pool[idx];
+      roster.push({slot, pid, points:totals[pid], resolvedPosition:resolvePositionForSlot(pid, slot, year)});
+      pool.splice(idx,1);
+    });
+    teams[teamNum] = roster;
+  });
+  DB.awards.allDocile[year] = teams;
+  return teams;
+}
+
+// Rookie status: a player counts as a rookie for `year` if they were selected in that
+// year's rookie draft (ROOKIE_DRAFT_IDS[year]). This is a proxy for actual NBA rookie
+// status — accurate for the vast majority of cases, but a late draft-and-stash pick who
+// debuts a year after being drafted would be misattributed. Flag if that needs refining.
+function getRookiePidsForYear(year){
+  const picks = DB.draftPicks[year] || [];
+  return new Set(picks.map(p => p.player_id));
+}
+
+function buildAllRookieTeam(year){
+  const totals = computeSeasonTotals(year);
+  const rookiePids = getRookiePidsForYear(year);
+  let pool = Object.keys(totals)
+    .filter(pid => totals[pid] > 0 && rookiePids.has(pid))
+    .sort((a,b) => totals[b]-totals[a]);
+
+  const teams = {};
+  [1,2,3].forEach(teamNum => {
+    const roster = [];
+    ROOKIE_FILL_ORDER.forEach(slot => {
+      const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, year));
+      if(idx === -1){ roster.push({slot, pid:null, points:0}); return; }
+      const pid = pool[idx];
+      roster.push({slot, pid, points:totals[pid], resolvedPosition:slot});
+      pool.splice(idx,1);
+    });
+    teams[teamNum] = roster;
+  });
+  DB.awards.allRookie[year] = teams;
+  return teams;
+}
+
+function buildHonorsForYear(year){
+  buildWeeklyLineupScores(year);
+  computeWeeklyAwards(year);
+  buildAllDocileTeams(year);
+  buildAllRookieTeam(year);
+}
+
+/* ============================================================
+   API FETCH — proxied through Cloudflare Worker
+   ============================================================ */
+async function apiFetch(path){
+  const url = `${CF_WORKER_URL}${path.startsWith('/')?path:'/'+path}`;
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`apiFetch failed [${res.status}] ${path}`);
+  return res.json();
+}
+
+async function fetchSnapshot(year){
+  if(!SNAPSHOT_BASE) return null;
+  try{
+    const res = await fetch(`${SNAPSHOT_BASE}/${year}.json`);
+    if(!res.ok) return null;
+    return res.json();
+  }catch(e){ return null; }
+}
+
+/* ============================================================
+   MANAGER / USERNAME / TEAM NAME HELPERS
+   ============================================================ */
+function resolveUsername(rawUsername){
+  return USERNAME_ALIASES[rawUsername] || rawUsername;
+}
+
+function getManager(managerKey){
+  return MANAGERS[managerKey] || null;
+}
+
+function getManagersForYear(year){
+  return Object.keys(MANAGERS).filter(k => MANAGERS[k].years.includes(year));
+}
+
+function getTeamName(managerKey, year){
+  const eras = TEAM_NAMES[managerKey];
+  if(!eras) return managerKey;
+  const era = eras.find(e => e.years.includes(year));
+  if(era) return era.name;
+  // 2026 (and any future undefined year) inherits the most recent known era
+  const latest = eras.reduce((a,b) => Math.max(...a.years) > Math.max(...b.years) ? a : b);
+  return latest.name;
+}
+
+function getManagerDisplay(managerKey, year){
+  const m = getManager(managerKey);
+  return m ? `${getTeamName(managerKey, year)} (${m.name})` : managerKey;
+}
+
+/* ============================================================
+   POSITION BADGE RENDERING
+   ============================================================ */
+// Compact badge for tables/cards: single color if one position, hard-stop split if two,
+// neutral "multi" badge with text for 3+.
+function renderPositionBadge(positions){
+  if(!positions || !positions.length) return `<span class="pos-badge pos-multi">–</span>`;
+  if(positions.length === 1){
+    const p = positions[0];
+    return `<span class="pos-badge pos-${p.toLowerCase()}">${p}</span>`;
+  }
+  if(positions.length === 2){
+    const [a,b] = positions;
+    const ca = `var(${POSITION_COLORS[a]})`, cb = `var(${POSITION_COLORS[b]})`;
+    return `<span class="pos-badge pos-split" style="background:conic-gradient(${ca} 0deg 180deg, ${cb} 180deg 360deg);">${a}/${b}</span>`;
+  }
+  return `<span class="pos-badge pos-multi">${positions.join('/')}</span>`;
+}
+
+// Resolved-color badge for a player placed in a specific lineup slot (shows how they were USED, not eligibility)
+function renderSlotBadge(resolvedPosition, slotLabel){
+  const p = resolvedPosition;
+  return `<span class="pos-badge pos-${p.toLowerCase()}" title="Started at ${slotLabel}">${slotLabel}</span>`;
+}
+
+// Per-season eligibility timeline strip for the player modal
+function renderEligibilityTimeline(pid){
+  const meta = DB.playerMeta[pid];
+  if(!meta || !meta.positionsBySeasonYear) return '';
+  const years = Object.keys(meta.positionsBySeasonYear).map(Number).sort((a,b)=>a-b);
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;">${years.map(y => `
+    <div style="text-align:center;">
+      <div style="font-size:10px;color:var(--text-faint);margin-bottom:3px;">${seasonLabel(y)}</div>
+      ${renderPositionBadge(meta.positionsBySeasonYear[y])}
+    </div>`).join('')}</div>`;
+}
+
+/* ============================================================
+   NAV / SECTIONS
+   ============================================================ */
+const SECTIONS = {
+  home:    {label:'Home',    icon:'ti-home',            panel:'home'},
+  myteam:  {label:'My Team', icon:'ti-shirt-sport',     panel:'myteam'},
+  league:  {label:'League',  icon:'ti-trophy',          panel:'league'},
+  draft:   {label:'Draft',   icon:'ti-clipboard-list',  panel:'draft'},
+  alldocile:{label:'Honors', icon:'ti-medal',           panel:'alldocile'},
+  awards:  {label:'POTG/POTW', icon:'ti-flame',         panel:'awards'},
+  search:  {label:'Search',  icon:'ti-search',          panel:'search'}
+};
+// Order shown in nav (bottom nav shows a max of 5 primary + rest folded conceptually; kept flat here)
+const NAV_ORDER = ['home','myteam','league','draft','alldocile','awards','search'];
+
+/* ============================================================
+   DATA LOADING
+   ============================================================ */
+
+// Loads one season's league settings, rosters, and users; resolves aliased usernames
+// to canonical MANAGERS keys and attaches a rosterId -> managerKey map.
+async function loadSeason(year){
+  const leagueId = LEAGUE_IDS[year];
+  if(!leagueId) return null;
+
+  const [league, rosters, users] = await Promise.all([
+    apiFetch(`/league/${leagueId}`),
+    apiFetch(`/league/${leagueId}/rosters`),
+    apiFetch(`/league/${leagueId}/users`)
+  ]);
+
+  const userIdToManagerKey = {};
+  users.forEach(u => { userIdToManagerKey[u.user_id] = resolveUsername(u.username || u.display_name); });
+
+  const rosterIdToManagerKey = {};
+  rosters.forEach(r => { rosterIdToManagerKey[r.roster_id] = userIdToManagerKey[r.owner_id]; });
+
+  const seasonData = {
+    league, rosters, users,
+    userIdToManagerKey, rosterIdToManagerKey,
+    playoffWeekStart: league.settings ? league.settings.playoff_week_start : null,
+    matchupsByWeek: {}
+  };
+  DB.seasons[year] = seasonData;
+  return seasonData;
+}
+
+async function loadAllSeasons(){
+  const years = Object.keys(LEAGUE_IDS).map(Number);
+  await Promise.all(years.map(y => loadSeason(y)));
+}
+
+// Pulls regular-season matchup weeks only (1 .. playoffWeekStart-1), per the ruling that
+// playoff scoring is excluded entirely from player-facing stat tracking.
+async function loadRegularSeasonMatchups(year){
+  const season = DB.seasons[year];
+  if(!season) return;
+  const leagueId = LEAGUE_IDS[year];
+  const lastRegWeek = (season.playoffWeekStart || 19) - 1;
+  const weeks = Array.from({length:lastRegWeek}, (_,i) => i+1);
+  const results = await Promise.all(weeks.map(w => apiFetch(`/league/${leagueId}/matchups/${w}`).catch(()=>null)));
+  weeks.forEach((w,i) => { season.matchupsByWeek[w] = results[i] || []; });
+}
+
+async function loadAllDraftPicks(){
+  const years = Object.keys(ROOKIE_DRAFT_IDS).map(Number);
+  const results = await Promise.all(years.map(y => apiFetch(`/draft/${ROOKIE_DRAFT_IDS[y]}/picks`).catch(()=>[])));
+  years.forEach((y,i) => { DB.draftPicks[y] = results[i]; });
+}
+
+async function loadStartupDraft(){
+  try{
+    DB.startupDraftPicks = await apiFetch(`/draft/${STARTUP_DRAFT_ID}/picks`);
+  }catch(e){ DB.startupDraftPicks = []; }
+}
+
+// Full NBA player pool from Sleeper, used for name/position resolution.
+async function loadPlayerPool(){
+  const players = await apiFetch('/players/nba');
+  Object.keys(players).forEach(pid => {
+    const p = players[pid];
+    if(!DB.playerMeta[pid]){
+      DB.playerMeta[pid] = {
+        name: p.full_name || `${p.first_name||''} ${p.last_name||''}`.trim(),
+        teamAbbr: p.team,
+        positionsBySeasonYear: {}
+      };
+    }
+    // current-season eligibility as a fallback for the latest year; historical snapshots
+    // (when wired in) should overwrite positionsBySeasonYear[year] with that season's actual data
+    DB.playerMeta[pid].positionsBySeasonYear[CURRENT_SEASON] = (p.fantasy_positions || []).filter(x => TRUE_POSITIONS.includes(x));
+  });
+}
+
+let PLAYER_NAME_INDEX = null; // built lazily by buildPlayerNameMap()
+const PID_OVERRIDES = {
+  // 'search string': 'sleeper_pid'  — fill in as edge cases surface
+};
+
+function normalizeNameForMatch(s){
+  return (s||'').toLowerCase().replace(/[.'-]/g,'').replace(/\s+jr$|\s+sr$|\s+iii$|\s+ii$|\s+iv$/,'').trim();
+}
+
+function buildPlayerNameMap(){
+  PLAYER_NAME_INDEX = {};
+  Object.keys(DB.playerMeta).forEach(pid => {
+    const key = normalizeNameForMatch(DB.playerMeta[pid].name);
+    if(key) PLAYER_NAME_INDEX[key] = pid;
+  });
+}
+
+function lookupPid(name){
+  if(PID_OVERRIDES[name]) return PID_OVERRIDES[name];
+  if(!PLAYER_NAME_INDEX) buildPlayerNameMap();
+  const key = normalizeNameForMatch(name);
+  return PLAYER_NAME_INDEX[key] || null;
+}
+
+/* ============================================================
+   DB — all runtime state lives here
+   ============================================================ */
+const DB = {
+  currentSeason: CURRENT_SEASON,
+  selectedSeason: null,          // season the UI is currently browsing (defaults to latest completed)
+  seasons: {},                   // DB.seasons[year] = { league, rosters, users, matchupsByWeek, playoffWeekStart }
+  allStarters: {},               // DB.allStarters[year][week] = [{pid, points, rosterId, managerKey, slot}]
+  playerMeta: {},                // DB.playerMeta[pid] = { name, teamAbbr, positionsBySeasonYear:{year:[...]}, ... }
+  draftPicks: {},                // DB.draftPicks[year] = [ picks... ]
+  startupDraftPicks: [],         // 2020 startup draft picks
+  awards: {
+    potg: {},                    // DB.awards.potg[year][week] = [{pid, points, rosterId, matchupId}, ...]
+    potw: {},                    // DB.awards.potw[year][week] = [{pid, points, rosterId}, ...] (array to support shared honors)
+    allDocile: {},               // DB.awards.allDocile[year] = {1:[...10 slotted...], 2:[...], 3:[...]}
+    allRookie: {}                // DB.awards.allRookie[year] = {1:[...5 slotted...], 2:[...], 3:[...]}
+  },
+  charts: {},                    // live Chart.js instances, keyed by canvas id, destroyed on re-render
+  loaded: false
+};
+
+/* ============================================================
+   NAVIGATION
+   ============================================================ */
+function renderSidebarNav(){
+  const el = document.getElementById('sidebar-nav');
+  el.innerHTML = `<div class="nav-section">
+    <div class="nav-label">Fellowship</div>
+    ${NAV_ORDER.map(key => `
+      <div class="nav-item" data-nav="${key}" onclick="switchTab('${key}')">
+        <i class="ti ${SECTIONS[key].icon}"></i>${SECTIONS[key].label}
+      </div>`).join('')}
+  </div>`;
+}
+
+function renderBottomNav(){
+  const primary = ['home','myteam','league','alldocile','search'];
+  const el = document.getElementById('bn-main');
+  el.innerHTML = primary.map(key => `
+    <div class="bn-item" data-nav="${key}" onclick="switchTab('${key}')">
+      <i class="ti ${SECTIONS[key].icon}"></i><span>${SECTIONS[key].label}</span>
+    </div>`).join('');
+}
+
+function renderYearChips(containerId, onSelect, selectedYear){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
+  el.innerHTML = years.map(y => `
+    <div class="yr-chip ${y===selectedYear?'active':''}" data-year="${y}">${seasonLabel(y)}</div>`).join('');
+  el.querySelectorAll('.yr-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      el.querySelectorAll('.yr-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      onSelect(Number(chip.dataset.year));
+    });
+  });
+}
+
+function switchTab(name){
+  Object.keys(SECTIONS).forEach(key => {
+    document.getElementById(`panel-${SECTIONS[key].panel}`).classList.toggle('active', key===name);
+  });
+  document.querySelectorAll('[data-nav]').forEach(navEl => {
+    navEl.classList.toggle('active', navEl.dataset.nav === name);
+  });
+
+  // lazy render on tab switch
+  if(name==='home') renderHome();
+  if(name==='myteam') renderMyTeam();
+  if(name==='league') renderLeague();
+  if(name==='draft') renderDraft();
+  if(name==='alldocile') renderAllDocilePanel();
+  if(name==='awards') renderAwardsPanel();
+  if(name==='search') renderSearch();
+}
+
+/* ============================================================
+   RENDER: destroys any live charts before a full re-render,
+   resets chip state, called once after initial data load.
+   ============================================================ */
+function destroyAllCharts(){
+  Object.values(DB.charts).forEach(c => { try{ c.destroy(); }catch(e){} });
+  DB.charts = {};
+}
+
+function renderAll(){
+  destroyAllCharts();
+  DB.selectedSeason = DB.selectedSeason || (CURRENT_SEASON - 1); // default to latest completed season
+  renderSidebarNav();
+  renderBottomNav();
+  switchTab('home');
+}
+
+/* ============================================================
+   PANEL RENDERERS
+   ============================================================ */
+function renderHome(){
+  const el = document.getElementById('home-body');
+  const year = DB.selectedSeason;
+  const champ = FINAL_STANDINGS[year];
+  el.innerHTML = `
+    <div class="card-grid">
+      <div class="card">
+        <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Current Season</div>
+        <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">${seasonLabel(DB.currentSeason)}</div>
+        <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">${DB.currentSeason===CURRENT_SEASON ? 'Pre-draft' : 'In progress'}</div>
+      </div>
+      <div class="card">
+        <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${seasonLabel(year)} Champion</div>
+        ${champ ? `<div class="trophy-chip"><i class="ti ti-trophy"></i>${getManagerDisplay(champ.champion, year)}</div>` : `<div style="color:var(--text-faint);">Not yet decided</div>`}
+      </div>
+      <div class="card">
+        <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Fellowship Size</div>
+        <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">12 Managers</div>
+        <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">Active since ${seasonLabel(FIRST_SEASON)}</div>
+      </div>
+    </div>
+    <div id="home-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 14px;"></div>
+    <div class="empty-state"><i class="ti ti-plug-connected"></i>Connect the Cloudflare Worker (CF_WORKER_URL) and load season data to populate recent activity, standings, and matchup recaps here.</div>
+  `;
+  renderYearChips('home-yr-chips', (y)=>{ DB.selectedSeason = y; renderHome(); }, year);
+}
+
+function renderMyTeam(){
+  const el = document.getElementById('myteam-body');
+  el.innerHTML = `
+    <div style="margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;">
+      ${Object.keys(MANAGERS).sort((a,b)=>MANAGERS[a].name.localeCompare(MANAGERS[b].name)).map(k => `
+        <div class="yr-chip" onclick="renderMyTeamFor('${k}')">${MANAGERS[k].name}</div>`).join('')}
+    </div>
+    <div id="myteam-detail" class="empty-state"><i class="ti ti-user-search"></i>Select a manager to view roster history.</div>
+  `;
+}
+
+function renderMyTeamFor(managerKey){
+  const el = document.getElementById('myteam-detail');
+  const m = getManager(managerKey);
+  if(!m){ el.innerHTML = `<div class="empty-state">Unknown manager.</div>`; return; }
+  const years = m.years;
+  el.innerHTML = `
+    <div class="card">
+      <h3>${m.name}</h3>
+      <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:10px;">Fellowship member ${seasonLabel(years[0])} – ${seasonLabel(years[years.length-1])}</div>
+      <table class="data-table">
+        <thead><tr><th>Season</th><th>Team Name</th><th>Finish</th></tr></thead>
+        <tbody>
+          ${years.map(y => `<tr>
+            <td>${seasonLabel(y)}</td>
+            <td>${getTeamName(managerKey,y)}</td>
+            <td>${FINAL_STANDINGS[y] && FINAL_STANDINGS[y].champion===managerKey ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderLeague(){
+  const el = document.getElementById('league-body');
+  const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
+  el.innerHTML = `
+    <div class="card">
+      <h3>Docile Champions</h3>
+      <table class="data-table">
+        <thead><tr><th>Season</th><th>Champion</th><th>Team</th></tr></thead>
+        <tbody>
+          ${years.filter(y=>FINAL_STANDINGS[y]).map(y => `<tr>
+            <td>${seasonLabel(y)}</td>
+            <td>${MANAGERS[FINAL_STANDINGS[y].champion].name}</td>
+            <td>${getTeamName(FINAL_STANDINGS[y].champion, y)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderDraft(){
+  const el = document.getElementById('draft-body');
+  el.innerHTML = `
+    <div id="draft-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="draft-table" class="empty-state"><i class="ti ti-clipboard-list"></i>Load draft picks (loadAllDraftPicks / loadStartupDraft) to populate this view.</div>
+  `;
+  renderYearChips('draft-yr-chips', (y)=>{ renderDraftFor(y); }, DB.selectedSeason);
+}
+
+function renderDraftFor(year){
+  const el = document.getElementById('draft-table');
+  const picks = year===FIRST_SEASON ? DB.startupDraftPicks : (DB.draftPicks[year]||[]);
+  if(!picks.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i>No draft data loaded for ${seasonLabel(year)} yet.</div>`; return; }
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Rd</th><th>Pick</th><th>Player</th><th>Manager</th></tr></thead>
+    <tbody>${picks.map(p => `<tr>
+      <td>${p.round}</td><td>${p.pick_no}</td>
+      <td>${(p.metadata && p.metadata.first_name) ? `${p.metadata.first_name} ${p.metadata.last_name}` : p.player_id}</td>
+      <td>${MANAGERS[DB.seasons[year] && DB.seasons[year].rosterIdToManagerKey[p.roster_id]] ? MANAGERS[DB.seasons[year].rosterIdToManagerKey[p.roster_id]].name : '—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function renderHonorsRoster(roster, year){
+  return `<table class="data-table">
+    <thead><tr><th>Slot</th><th>Player</th><th>Pos</th><th>Lineup Pts</th></tr></thead>
+    <tbody>${roster.map(r => `<tr>
+      <td>${r.slot}</td>
+      <td>${r.pid ? `<a href="#" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name || r.pid}</a>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</td>
+      <td>${r.pid ? renderSlotBadge(r.resolvedPosition, r.slot) : ''}</td>
+      <td>${r.points ? r.points.toFixed(1) : '—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function renderAllDocilePanel(){
+  const el = document.getElementById('alldocile-body');
+  el.innerHTML = `
+    <div id="honors-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="honors-detail" class="empty-state"><i class="ti ti-medal"></i>Build honors for a season (buildHonorsForYear) to populate All-Docile / All-Rookie teams.</div>
+  `;
+  renderYearChips('honors-yr-chips', (y)=>{ renderHonorsFor(y); }, DB.selectedSeason);
+}
+
+function renderHonorsFor(year){
+  const el = document.getElementById('honors-detail');
+  const docile = DB.awards.allDocile[year];
+  const rookie = DB.awards.allRookie[year];
+  if(!docile){ el.innerHTML = `<div class="empty-state"><i class="ti ti-medal"></i>No honors data built for ${seasonLabel(year)} yet.</div>`; return; }
+  el.innerHTML = `
+    <h3>All-Docile — ${seasonLabel(year)}</h3>
+    <div class="card-grid">
+      ${[1,2,3].map(t => `<div class="card"><h4>${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(docile[t], year)}</div>`).join('')}
+    </div>
+    <h3 style="margin-top:24px;">All-Rookie — ${seasonLabel(year)}</h3>
+    <div class="card-grid">
+      ${[1,2,3].map(t => `<div class="card"><h4>${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(rookie[t], year)}</div>`).join('')}
+    </div>
+  `;
+}
+
+function renderAwardsPanel(){
+  const el = document.getElementById('awards-body');
+  el.innerHTML = `
+    <div id="awards-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="awards-detail" class="empty-state"><i class="ti ti-flame"></i>Build honors for a season to populate weekly POTG/POTW.</div>
+  `;
+  renderYearChips('awards-yr-chips', (y)=>{ renderAwardsFor(y); }, DB.selectedSeason);
+}
+
+function renderAwardsFor(year){
+  const el = document.getElementById('awards-detail');
+  const potg = DB.awards.potg[year];
+  const potw = DB.awards.potw[year];
+  if(!potg){ el.innerHTML = `<div class="empty-state"><i class="ti ti-flame"></i>No award data built for ${seasonLabel(year)} yet.</div>`; return; }
+  const weeks = Object.keys(potg).map(Number).sort((a,b)=>a-b);
+  el.innerHTML = `<table class="data-table">
+    <thead><tr><th>Week</th><th>Player of the Week</th><th>All Players of the Game</th></tr></thead>
+    <tbody>${weeks.map(w => `<tr>
+      <td>${w}</td>
+      <td>${(potw[w]||[]).map(p => `<a href="#" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</a> (${p.points.toFixed(1)})`).join(' &amp; ')}</td>
+      <td>${(potg[w]||[]).map(p => `${(DB.playerMeta[p.pid]||{}).name||p.pid} (${p.points.toFixed(1)})`).join(', ')}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+function renderSearch(){
+  const el = document.getElementById('search-body');
+  el.innerHTML = `
+    <input id="search-input" type="text" placeholder="Search players by name..."
+      style="width:100%;padding:10px 14px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:14px;margin-bottom:16px;">
+    <div id="search-results" class="empty-state"><i class="ti ti-search"></i>Start typing to search the Fellowship's player pool.</div>
+  `;
+  document.getElementById('search-input').addEventListener('input', (e) => runPlayerSearch(e.target.value));
+}
+
+function runPlayerSearch(query){
+  const el = document.getElementById('search-results');
+  const q = normalizeNameForMatch(query);
+  if(!q || q.length < 2){ el.innerHTML = `<div class="empty-state"><i class="ti ti-search"></i>Start typing to search the Fellowship's player pool.</div>`; return; }
+  const matches = Object.keys(DB.playerMeta).filter(pid => normalizeNameForMatch(DB.playerMeta[pid].name).includes(q)).slice(0,40);
+  if(!matches.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-mood-empty"></i>No players found.</div>`; return; }
+  el.innerHTML = `<div class="card-grid">${matches.map(pid => `
+    <div class="card" style="cursor:pointer;" onclick="openPlayerModal('${pid}')">
+      <div style="font-weight:700;">${DB.playerMeta[pid].name}</div>
+      <div style="color:var(--text-dim);font-size:12px;margin-top:4px;">${renderPositionBadge(getPlayerPositions(pid, DB.currentSeason))} ${DB.playerMeta[pid].teamAbbr||''}</div>
+    </div>`).join('')}</div>`;
+}
+
+/* ============================================================
+   PLAYER MODAL
+   ============================================================ */
+function openPlayerModal(pid){
+  const meta = DB.playerMeta[pid];
+  if(!meta) return;
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+  content.innerHTML = `
+    <h2>${meta.name}</h2>
+    <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:14px;">${meta.teamAbbr||'Free Agent'}</div>
+    <div style="margin-bottom:16px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;">Eligibility by Season</div>
+      ${renderEligibilityTimeline(pid)}
+    </div>
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;">Acquisition / Awards / Trade History</div>
+    <div class="empty-state" style="padding:20px;"><i class="ti ti-clock"></i>Wire in draft-acquisition lookup, POTG/POTW honors, and trade history for this player.</div>
+  `;
+  overlay.classList.add('active');
+}
+document.getElementById('modal-close').addEventListener('click', () => {
+  document.getElementById('modal-overlay').classList.remove('active');
+});
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'modal-overlay') document.getElementById('modal-overlay').classList.remove('active');
+});
+
+/* ============================================================
+   INIT
+   ============================================================ */
+async function init(){
+  renderAll(); // render shell immediately so nav is usable while data loads
+
+  if(CF_WORKER_URL.includes('YOUR-WORKER')){
+    console.warn('CF_WORKER_URL is still a placeholder — set it to your deployed Cloudflare Worker before loading live data.');
+    return;
+  }
+
+  try{
+    await loadAllSeasons();
+    await loadPlayerPool();
+    buildPlayerNameMap();
+    await loadAllDraftPicks();
+    await loadStartupDraft();
+
+    const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
+    for(const y of years){
+      await loadRegularSeasonMatchups(y);
+      buildHonorsForYear(y);
+    }
+
+    DB.loaded = true;
+    renderAll();
+  }catch(e){
+    console.error('Data load failed:', e);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
