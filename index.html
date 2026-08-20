@@ -295,6 +295,21 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
 .pos-badge.pos-split{color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5);}
 .pos-badge.pos-multi{background:var(--bg-hover);color:var(--text-dim);border:1px solid var(--border);}
 
+.player-link{cursor:pointer;color:var(--accent);text-decoration:none;position:relative;}
+.player-link:hover{text-decoration:underline;text-decoration-color:var(--accent-dim);text-underline-offset:3px;}
+.player-link::after{
+  content:'View card';position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-dim);
+  font-size:10.5px;padding:3px 8px;border-radius:5px;white-space:nowrap;
+  opacity:0;pointer-events:none;transition:opacity .12s;
+}
+.player-link:hover::after{opacity:1;}
+@media (max-width:880px){
+  .player-link{display:inline-flex;align-items:center;gap:3px;}
+  .player-link::before{content:'\2197';font-size:10px;color:var(--accent);opacity:.7;order:2;}
+  .player-link::after{display:none;}
+}
+
 .trophy-chip{
   display:inline-flex;align-items:center;gap:5px;
   background:rgba(216,176,74,0.12);
@@ -306,6 +321,12 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
   font-weight:600;
 }
 .trophy-chip i{font-size:13px;}
+
+.timeline-rail{position:relative;padding-left:30px;max-width:640px;}
+.timeline-rail::before{content:'';position:absolute;left:8px;top:6px;bottom:6px;width:2px;background:var(--border);}
+.timeline-item{position:relative;margin-bottom:20px;}
+.timeline-dot{position:absolute;left:-30px;top:5px;width:15px;height:15px;border-radius:50%;background:var(--bg-panel);border:2px solid var(--border);}
+.timeline-dot.champ{background:var(--gold);border-color:var(--gold);box-shadow:0 0 0 4px rgba(216,176,74,0.15);}
 
 .empty-state{
   text-align:center;
@@ -353,6 +374,10 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
   #topbar{display:flex;}
   #content{padding:16px 16px 140px;}
   #bottomnav{display:block;}
+  /* Opt-in: apply .table-scroll-min to a table (only when its wrapper div already has
+     overflow-x:auto) to force real horizontal scrolling instead of columns cramming
+     down to unreadable widths. NOT applied globally — many tables aren't wrapped yet. */
+  table.data-table.table-scroll-min{min-width:480px;}
 }
 </style>
 </head>
@@ -690,18 +715,17 @@ function buildAllRookieTeam(year){
     .filter(pid => totals[pid] > 0 && rookiePids.has(pid))
     .sort((a,b) => totals[b]-totals[a]);
 
-  const teams = {};
-  [1,2,3].forEach(teamNum => {
-    const roster = [];
-    ROOKIE_FILL_ORDER.forEach(slot => {
-      const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, year));
-      if(idx === -1){ roster.push({slot, pid:null, points:0}); return; }
-      const pid = pool[idx];
-      roster.push({slot, pid, points:totals[pid], resolvedPosition:slot});
-      pool.splice(idx,1);
-    });
-    teams[teamNum] = roster;
+  // Only one All-Rookie team is honored (unlike All-Docile's three tiers) —
+  // rookie classes are too shallow to support meaningful 2nd/3rd teams.
+  const roster = [];
+  ROOKIE_FILL_ORDER.forEach(slot => {
+    const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, year));
+    if(idx === -1){ roster.push({slot, pid:null, points:0}); return; }
+    const pid = pool[idx];
+    roster.push({slot, pid, points:totals[pid], resolvedPosition:slot});
+    pool.splice(idx,1);
   });
+  const teams = {1: roster};
   DB.awards.allRookie[year] = teams;
   return teams;
 }
@@ -734,10 +758,19 @@ function computeAllTimeManagerRecords(){
 }
 
 // Head-to-head record between two managers across every loaded season's regular-season matchups.
+// Single source of truth for head-to-head records — used by both My H2H and League H2H,
+// so the two pages can never drift out of sync with each other. Returns a full per-game
+// log alongside the win totals. Ties count toward mk1 (matching the >= convention used
+// elsewhere in the app, e.g. Weekly Recap results and POTG's winning-team tiebreak) —
+// exact ties are vanishingly rare with decimal scoring, but the old version silently
+// dropped tied games from BOTH totals instead of counting them, which could undercount
+// a manual game-by-game tally.
 function computeAllTimeH2H(mk1, mk2){
-  let w1 = 0, w2 = 0;
-  Object.values(DB.seasons).forEach(season => {
-    Object.values(season.matchupsByWeek || {}).forEach(mus => {
+  const games = [];
+  Object.entries(DB.seasons).forEach(([yearStr, season]) => {
+    const year = Number(yearStr);
+    Object.entries(season.matchupsByWeek || {}).forEach(([wStr, mus]) => {
+      const week = Number(wStr);
       const byId = {};
       mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
       Object.values(byId).forEach(pair => {
@@ -748,13 +781,16 @@ function computeAllTimeH2H(mk1, mk2){
         const isA1 = ka === mk1, isB1 = kb === mk1;
         const isA2 = ka === mk2, isB2 = kb === mk2;
         if(!((isA1 && isB2) || (isB1 && isA2))) return;
-        const pa = a.points || 0, pb = b.points || 0;
-        if(isA1 && pa > pb) w1++; else if(isA1 && pb > pa) w2++;
-        else if(isB1 && pb > pa) w1++; else if(isB1 && pa > pb) w2++;
+        const pt1 = isA1 ? (a.points||0) : (b.points||0);
+        const pt2 = isA2 ? (a.points||0) : (b.points||0);
+        games.push({year, week, pt1, pt2});
       });
     });
   });
-  return {w1, w2};
+  games.sort((a,b) => b.year-a.year || b.week-a.week);
+  const w1 = games.filter(g => g.pt1 >= g.pt2).length;
+  const w2 = games.filter(g => g.pt2 > g.pt1).length;
+  return {w1, w2, games};
 }
 
 /* ============================================================
@@ -1159,6 +1195,13 @@ function ordinal(n){
   return s[(v-20)%10] || s[v] || s[0];
 }
 
+// Comma-separated number formatting (5243.4 -> "5,243.4"), used wherever a raw
+// total is shown so large point totals read cleanly.
+function fmtNum(n, decimals=1){
+  if(n == null || isNaN(n)) return '—';
+  return n.toLocaleString(undefined, {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+}
+
 // Proxies to a second Cloudflare Worker that talks to the Anthropic API. Not yet
 // deployed — powers the Weekly Recap's AI blurb and, eventually, Smart Search.
 // Mirrors the football archive's callClaude() pattern exactly.
@@ -1415,57 +1458,156 @@ function renderAll(){
 /* ============================================================
    PANEL RENDERERS
    ============================================================ */
-function renderDashboard(){
-  const el = document.getElementById('dashboard-body');
-  const year = DB.selectedSeason;
-  const champ = FINAL_STANDINGS[year];
+// Prefers the current season if it actually has matchup data loaded; otherwise
+// falls back to the most recently completed season. Drives every "current" framing
+// on the Dashboard now that the season-toggle chips are gone.
+function getActiveSeasonYear(){
+  const curSeason = DB.seasons[DB.currentSeason];
+  if(curSeason && Object.keys(curSeason.matchupsByWeek||{}).length) return DB.currentSeason;
+  return CURRENT_SEASON - 1;
+}
 
-  // "My Season" card — only shows if we recognized a signed-in manager
-  let myCardHTML = '';
-  if(DB.myManagerKey){
-    const mySeason = DB.seasons[year];
-    const myTeam = mySeason ? (mySeason.teams || []).find(t => t.managerKey === DB.myManagerKey) : null;
-    const myName = (getManager(DB.myManagerKey) || {}).name || DB.myManagerKey;
+// Walks backward from the most recent loaded season/week to find the signed-in
+// manager's most recent matchup — this doubles as "current week" when a season is
+// actively in progress, and gracefully becomes "most recent" otherwise (e.g. pre-draft).
+function getMostRecentMatchupForManager(managerKey){
+  if(!managerKey) return null;
+  const years = Object.keys(DB.seasons).map(Number).sort((a,b)=>b-a);
+  for(const year of years){
+    const season = DB.seasons[year];
+    const weeks = Object.keys(season.matchupsByWeek||{}).map(Number).sort((a,b)=>b-a);
+    for(const week of weeks){
+      const mus = season.matchupsByWeek[week];
+      const myEntry = mus.find(m => season.rosterIdToManagerKey[m.roster_id] === managerKey);
+      if(!myEntry) continue;
+      const oppEntry = mus.find(m => m.matchup_id === myEntry.matchup_id && m.roster_id !== myEntry.roster_id);
+      if(!oppEntry) continue;
+      return {year, week, myPts: myEntry.points||0, oppPts: oppEntry.points||0, oppKey: season.rosterIdToManagerKey[oppEntry.roster_id]};
+    }
+  }
+  return null;
+}
+
+function renderMarqueeMatchup(){
+  if(!DB.myManagerKey){
+    return `<div class="card" style="text-align:center;padding:26px;"><i class="ti ti-user-question" style="font-size:22px;color:var(--text-faint);"></i><div style="color:var(--text-faint);font-size:13px;margin-top:8px;">Sign in with a recognized Fellowship username to see your matchup here.</div></div>`;
+  }
+  const mu = getMostRecentMatchupForManager(DB.myManagerKey);
+  if(!mu){
+    return `<div class="card" style="text-align:center;padding:26px;"><i class="ti ti-calendar-off" style="font-size:22px;color:var(--text-faint);"></i><div style="color:var(--text-faint);font-size:13px;margin-top:8px;">No matchup data loaded yet.</div></div>`;
+  }
+  const h2h = computeAllTimeH2H(DB.myManagerKey, mu.oppKey);
+  const myWon = mu.myPts >= mu.oppPts;
+  const isLive = mu.year === DB.currentSeason;
+  return `
+    <div class="card" style="text-align:center;padding:26px;border-color:var(--accent-dim);">
+      <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px;">${isLive?'Current':'Most Recent'} \u00b7 ${seasonLabel(mu.year)} Week ${mu.week}</div>
+      <div style="display:flex;justify-content:center;align-items:center;gap:28px;">
+        <div>
+          <div style="font-size:13px;font-weight:600;${myWon?'color:var(--accent);':'color:var(--text-dim);'}">${(getManager(DB.myManagerKey)||{}).name}</div>
+          <div style="font-size:30px;font-weight:700;font-family:var(--font-display);">${fmtNum(mu.myPts)}</div>
+        </div>
+        <div style="color:var(--text-faint);font-size:12px;">vs</div>
+        <div>
+          <div style="font-size:13px;font-weight:600;${!myWon?'color:var(--accent);':'color:var(--text-dim);'}">${(getManager(mu.oppKey)||{}).name}</div>
+          <div style="font-size:30px;font-weight:700;font-family:var(--font-display);">${fmtNum(mu.oppPts)}</div>
+        </div>
+      </div>
+      <div style="color:var(--text-faint);font-size:11.5px;margin-top:14px;">All-time vs ${(getManager(mu.oppKey)||{}).name}: ${h2h.w1}\u2013${h2h.w2}</div>
+    </div>
+  `;
+}
+
+// Biggest all-time career-scoring rank movement caused by the most recent loaded
+// week's games — a "riser" gained ranking spots, a "faller" lost them. Compares
+// each player's all-time rank with vs. without the latest week's points.
+function computeRisersFallers(){
+  let latestYear = null, latestWeek = null;
+  Object.entries(DB.seasons).forEach(([yearStr, season]) => {
+    const year = Number(yearStr);
+    Object.keys(season.matchupsByWeek||{}).forEach(wStr => {
+      const week = Number(wStr);
+      if(latestYear===null || year>latestYear || (year===latestYear && week>latestWeek)){
+        latestYear = year; latestWeek = week;
+      }
+    });
+  });
+  if(latestYear===null) return {};
+
+  const beforeTotals = {}, afterTotals = {};
+  DB.allStarters.forEach(s => {
+    afterTotals[s.pid] = (afterTotals[s.pid]||0) + (s.points||0);
+    if(!(s.year===latestYear && s.week===latestWeek)) beforeTotals[s.pid] = (beforeTotals[s.pid]||0) + (s.points||0);
+  });
+  const beforeRank = Object.entries(beforeTotals).sort((a,b)=>b[1]-a[1]).map(([pid])=>pid);
+  const afterRank = Object.entries(afterTotals).sort((a,b)=>b[1]-a[1]).map(([pid])=>pid);
+  const beforeIdx = {}; beforeRank.forEach((pid,i) => beforeIdx[pid]=i+1);
+  const afterIdx = {}; afterRank.forEach((pid,i) => afterIdx[pid]=i+1);
+
+  const moves = afterRank.map(pid => ({pid, delta: (beforeIdx[pid] || (beforeRank.length+1)) - afterIdx[pid]}));
+  const riser = [...moves].sort((a,b) => b.delta - a.delta)[0];
+  const faller = [...moves].sort((a,b) => a.delta - b.delta)[0];
+  return {riser, faller, latestYear, latestWeek};
+}
+
+function renderDashboardBoxes(){
+  const activeYear = getActiveSeasonYear();
+  const season = DB.seasons[activeYear];
+  const boxHead = label => `<div style="color:var(--text-faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${label}</div>`;
+
+  let myBox = `<div class="card">${boxHead('Your Season')}<div style="color:var(--text-faint);font-size:12.5px;">Sign in to see this</div></div>`;
+  if(DB.myManagerKey && season){
+    const myTeam = (season.teams||[]).find(t => t.managerKey===DB.myManagerKey);
     if(myTeam){
-      const ranked = [...(mySeason.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
-      const myRank = ranked.findIndex(t => t.managerKey === DB.myManagerKey) + 1;
-      myCardHTML = `
-        <div class="card" style="border-color:var(--accent-dim);">
-          <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Your ${seasonLabel(year)}</div>
-          <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">${myTeam.wins}\u2013${myTeam.losses}</div>
-          <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">#${myRank} of 12 \u00b7 ${myTeam.pf.toFixed(0)} PF</div>
-        </div>`;
-    } else {
-      myCardHTML = `
-        <div class="card">
-          <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Welcome</div>
-          <div style="font-size:16px;font-weight:700;">${myName}</div>
-          <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">No roster found for ${seasonLabel(year)}</div>
-        </div>`;
+      const ranked = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
+      const rank = ranked.findIndex(t => t.managerKey===DB.myManagerKey)+1;
+      myBox = `<div class="card">${boxHead('Your Season')}
+        <div style="font-size:17px;font-weight:700;font-family:var(--font-display);">${myTeam.wins}\u2013${myTeam.losses}</div>
+        <div style="color:var(--text-dim);font-size:11.5px;">#${rank} \u00b7 ${fmtNum(myTeam.pf,0)} PF</div></div>`;
     }
   }
 
+  let leaderBox = `<div class="card">${boxHead('League Leader')}<div style="color:var(--text-faint);font-size:12.5px;">No data yet</div></div>`;
+  if(season && season.teams && season.teams.length){
+    const leader = [...season.teams].sort((a,b) => b.wins-a.wins || b.pf-a.pf)[0];
+    leaderBox = `<div class="card">${boxHead('League Leader')}
+      <div style="font-size:14px;font-weight:700;">${(getManager(leader.managerKey)||{}).name||leader.managerKey}</div>
+      <div style="color:var(--text-dim);font-size:11.5px;">${leader.wins}\u2013${leader.losses} \u00b7 ${fmtNum(leader.pf,0)} PF</div></div>`;
+  }
+
+  let potwBox = `<div class="card">${boxHead('Recent POTW')}<div style="color:var(--text-faint);font-size:12.5px;">No data yet</div></div>`;
+  const potwLog = computePotgData('all').filter(e => e.type==='POTW').sort((a,b) => b.year-a.year || b.week-a.week);
+  if(potwLog.length){
+    const recent = potwLog[0];
+    potwBox = `<div class="card">${boxHead('Recent POTW')}
+      <div style="font-size:14px;font-weight:700;">${(DB.playerMeta[recent.pid]||{}).name||recent.pid}</div>
+      <div style="color:var(--text-dim);font-size:11.5px;">${fmtNum(recent.pts)} pts \u00b7 ${seasonLabel(recent.year)} Wk ${recent.week}</div></div>`;
+  }
+
+  const myTitles = DB.myManagerKey ? Object.values(FINAL_STANDINGS).filter(f => f.champion===DB.myManagerKey).length : 0;
+  const champBox = `<div class="card">${boxHead('Championships')}
+    <div style="font-size:20px;font-weight:700;font-family:var(--font-display);color:var(--gold);">${myTitles}</div></div>`;
+
+  const {riser, faller} = computeRisersFallers();
+  const riserBox = riser ? `<div class="card" style="border-left:3px solid var(--good);">${boxHead('Riser')}
+    <div style="font-size:14px;font-weight:700;">${(DB.playerMeta[riser.pid]||{}).name||riser.pid}</div>
+    <div style="color:var(--good);font-size:11.5px;">\u2191 ${riser.delta} spot${riser.delta!==1?'s':''}</div></div>`
+    : `<div class="card">${boxHead('Riser')}<div style="color:var(--text-faint);font-size:12.5px;">No data yet</div></div>`;
+  const fallerBox = faller ? `<div class="card" style="border-left:3px solid var(--bad);">${boxHead('Faller')}
+    <div style="font-size:14px;font-weight:700;">${(DB.playerMeta[faller.pid]||{}).name||faller.pid}</div>
+    <div style="color:var(--bad);font-size:11.5px;">\u2193 ${Math.abs(faller.delta)} spot${Math.abs(faller.delta)!==1?'s':''}</div></div>`
+    : `<div class="card">${boxHead('Faller')}<div style="color:var(--text-faint);font-size:12.5px;">No data yet</div></div>`;
+
+  return `<div class="card-grid">${myBox}${leaderBox}${potwBox}${champBox}${riserBox}${fallerBox}</div>`;
+}
+
+function renderDashboard(){
+  const el = document.getElementById('dashboard-body');
   const insights = DB.loaded ? generateInsights() : [];
 
   el.innerHTML = `
-    <div class="card-grid">
-      <div class="card">
-        <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Current Season</div>
-        <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">${seasonLabel(DB.currentSeason)}</div>
-        <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">${DB.currentSeason===CURRENT_SEASON ? 'Pre-draft' : 'In progress'}</div>
-      </div>
-      <div class="card">
-        <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">${seasonLabel(year)} Champion</div>
-        ${champ ? `<div class="trophy-chip"><i class="ti ti-trophy"></i>${getManagerDisplay(champ.champion, year)}</div>` : `<div style="color:var(--text-faint);">Not yet decided</div>`}
-      </div>
-      <div class="card">
-        <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Fellowship Size</div>
-        <div style="font-size:20px;font-weight:700;font-family:var(--font-display);">12 Managers</div>
-        <div style="color:var(--text-dim);font-size:12.5px;margin-top:4px;">Active since ${seasonLabel(FIRST_SEASON)}</div>
-      </div>
-      ${myCardHTML}
-    </div>
-    <div id="dashboard-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin:20px 0 14px;"></div>
+    ${renderMarqueeMatchup()}
+    <div style="margin:20px 0;">${renderDashboardBoxes()}</div>
 
     <h3 style="margin-bottom:12px;">Automated Insights</h3>
     ${insights.length ? `
@@ -1478,7 +1620,6 @@ function renderDashboard(){
       </div>` : `
       <div class="empty-state"><i class="ti ti-sparkles"></i>${DB.loaded ? 'No data loaded yet.' : 'Insights populate once the archive finishes loading.'}</div>`}
   `;
-  renderYearChips('dashboard-yr-chips', (y)=>{ DB.selectedSeason = y; renderDashboard(); }, year);
 }
 
 /* ============================================================
@@ -1583,7 +1724,7 @@ function renderRecapFor(){
           <div style="display:flex;align-items:center;gap:10px;padding:8px 0;">
             <span class="trophy-chip"><i class="ti ti-star"></i>POTW</span>
             <div style="flex:1;">
-              <div style="font-weight:600;"><a href="#" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</a></div>
+              <div style="font-weight:600;"><span class="player-link" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</span></div>
               <div style="color:var(--text-faint);font-size:11.5px;">${getManagerDisplay(p.managerKey, yr)} \u00b7 ${getPotwCount(p.pid)}${ordinal(getPotwCount(p.pid))} career POTW \u00b7 ${getPotgCount(p.pid)}${ordinal(getPotgCount(p.pid))} career POTG</div>
             </div>
             <span style="font-family:var(--font-mono);font-weight:700;">${p.pts.toFixed(1)}</span>
@@ -1768,12 +1909,12 @@ function renderMyScoringTableBody(){
   if(!rows.length){ body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-faint);padding:24px;">No starters found.</td></tr>`; return; }
 
   body.innerHTML = rows.map(r => `<tr>
-    <td><a href="#" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</a></td>
+    <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
     <td>${renderPositionBadge(r.positions)}</td>
-    <td>${r.total.toFixed(1)}</td>
+    <td>${fmtNum(r.total)}</td>
     <td>${r.starts}</td>
-    <td>${r.avg.toFixed(1)}</td>
-    <td>${r.best.toFixed(1)}</td>
+    <td>${fmtNum(r.avg)}</td>
+    <td>${fmtNum(r.best)}</td>
   </tr>`).join('');
 }
 
@@ -1781,6 +1922,12 @@ function renderMyScoringTableBody(){
    MY H2H
    Record against every other manager across all loaded regular seasons.
    ============================================================ */
+let myH2HSort = {col:'w', dir:-1};
+function sortMyH2HTable(col){
+  myH2HSort = myH2HSort.col === col ? {col, dir: myH2HSort.dir * -1} : {col, dir:-1};
+  renderMyH2HPanel();
+}
+
 function renderMyH2HPanel(){
   const el = document.getElementById('myh2h-body');
   if(!DB.myManagerKey){
@@ -1788,16 +1935,26 @@ function renderMyH2HPanel(){
     return;
   }
   const opponents = Object.keys(MANAGERS).filter(k => k !== DB.myManagerKey);
-  const rows = opponents.map(oppKey => {
+  let rows = opponents.map(oppKey => {
     const h2h = computeAllTimeH2H(DB.myManagerKey, oppKey);
-    const games = h2h.w1 + h2h.w2;
+    const games = h2h.games.length;
     return {oppKey, w:h2h.w1, l:h2h.w2, games, pct: games ? h2h.w1/games : 0};
-  }).filter(r => r.games > 0).sort((a,b) => b.w - a.w);
+  }).filter(r => r.games > 0);
+
+  const dir = myH2HSort.dir;
+  const sf = {w:(a,b)=>(a.w-b.w)*dir, l:(a,b)=>(a.l-b.l)*dir, pct:(a,b)=>(a.pct-b.pct)*dir, games:(a,b)=>(a.games-b.games)*dir};
+  rows.sort(sf[myH2HSort.col] || sf.w);
 
   if(!rows.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-versus"></i>No head-to-head games found yet.</div>`; return; }
 
   el.innerHTML = `<table class="data-table">
-    <thead><tr><th>Opponent</th><th>W</th><th>L</th><th>Win %</th><th>Games</th></tr></thead>
+    <thead><tr>
+      <th style="cursor:default;">Opponent</th>
+      <th onclick="sortMyH2HTable('w')" class="${myH2HSort.col==='w'?'sorted':''}">W</th>
+      <th onclick="sortMyH2HTable('l')" class="${myH2HSort.col==='l'?'sorted':''}">L</th>
+      <th onclick="sortMyH2HTable('pct')" class="${myH2HSort.col==='pct'?'sorted':''}">Win %</th>
+      <th onclick="sortMyH2HTable('games')" class="${myH2HSort.col==='games'?'sorted':''}">Games</th>
+    </tr></thead>
     <tbody>${rows.map(r => `<tr>
       <td>${(getManager(r.oppKey)||{}).name || r.oppKey}</td>
       <td style="font-family:var(--font-mono);">${r.w}</td>
@@ -1812,12 +1969,25 @@ function renderMyH2HPanel(){
    MY DRAFT
    Rookie draft picks only — the 2020 startup draft is excluded per league rules.
    ============================================================ */
+let myDraftSort = {col:'year', dir:-1};
+function sortMyDraftTable(col){
+  myDraftSort = myDraftSort.col === col ? {col, dir: myDraftSort.dir * -1} : {col, dir:-1};
+  renderMyDraftTable();
+}
+
 function renderMyDraftPanel(){
   const el = document.getElementById('mydraft-body');
   if(!DB.myManagerKey){
     el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your draft history.</div>`;
     return;
   }
+  el.innerHTML = `<div id="mydraft-stats" style="margin-bottom:16px;"></div><div id="mydraft-table"></div>`;
+  renderMyDraftTable();
+}
+
+function renderMyDraftTable(){
+  const statsEl = document.getElementById('mydraft-stats');
+  const tableEl = document.getElementById('mydraft-table');
   const years = Object.keys(ROOKIE_DRAFT_IDS).map(Number).sort((a,b)=>b-a);
   const picks = [];
   years.forEach(y => {
@@ -1826,22 +1996,62 @@ function renderMyDraftPanel(){
       const managerKey = season ? season.rosterIdToManagerKey[p.roster_id] : null;
       if(managerKey !== DB.myManagerKey) return;
       const name = (p.metadata && p.metadata.first_name) ? `${p.metadata.first_name} ${p.metadata.last_name}` : (p.player_id || 'Unknown');
-      const myStarts = DB.allStarters.filter(s => s.pid === p.player_id && s.managerKey === DB.myManagerKey);
+      const myStarts = p.player_id ? DB.allStarters.filter(s => s.pid === p.player_id && s.managerKey === DB.myManagerKey) : [];
       const pts = myStarts.reduce((a,b) => a + (b.points||0), 0);
-      picks.push({year:y, round:p.round, pickNo:p.pick_no, pid:p.player_id, name, pts, starts:myStarts.length});
+      const positions = p.player_id ? getPlayerPositions(p.player_id, CURRENT_SEASON) : [];
+      picks.push({year:y, round:p.round, pickNo:p.pick_no, pid:p.player_id, name, pts, starts:myStarts.length, positions});
     });
   });
 
-  if(!picks.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i>No draft picks found for your roster.</div>`; return; }
+  if(!picks.length){
+    statsEl.innerHTML = '';
+    tableEl.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i>No draft picks found for your roster.</div>`;
+    return;
+  }
 
-  el.innerHTML = `<table class="data-table">
-    <thead><tr><th>Year</th><th>Rd</th><th>Pick</th><th>Player</th><th>Pts for you</th><th>Starts</th></tr></thead>
+  const totalPicks = picks.length;
+  const becameStarters = picks.filter(p => p.starts > 0).length;
+  const posBreakdown = {};
+  picks.forEach(p => { p.positions.forEach(pos => { posBreakdown[pos] = (posBreakdown[pos]||0) + 1; }); });
+
+  statsEl.innerHTML = `
+    <div class="card-grid">
+      <div class="card">
+        <div style="color:var(--text-faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Picks Made</div>
+        <div style="font-size:19px;font-weight:700;font-family:var(--font-display);">${totalPicks}</div>
+      </div>
+      <div class="card">
+        <div style="color:var(--text-faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Became Starters</div>
+        <div style="font-size:19px;font-weight:700;font-family:var(--font-display);">${becameStarters} <span style="font-size:12px;color:var(--text-faint);font-weight:400;">(${Math.round(becameStarters/totalPicks*100)}%)</span></div>
+      </div>
+      <div class="card">
+        <div style="color:var(--text-faint);font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Positional Breakdown</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${TRUE_POSITIONS.map(pos => posBreakdown[pos] ? `<span class="pos-badge pos-${pos.toLowerCase()}">${pos} ${posBreakdown[pos]}</span>` : '').join('')}
+        </div>
+      </div>
+    </div>
+  `;
+
+  const dir = myDraftSort.dir;
+  const sf = {year:(a,b)=>(a.year-b.year)*dir, pts:(a,b)=>(a.pts-b.pts)*dir, starts:(a,b)=>(a.starts-b.starts)*dir};
+  picks.sort(sf[myDraftSort.col] || sf.year);
+
+  tableEl.innerHTML = `<table class="data-table">
+    <thead><tr>
+      <th onclick="sortMyDraftTable('year')" class="${myDraftSort.col==='year'?'sorted':''}">Year</th>
+      <th style="cursor:default;">Rd \u00b7 Pick</th>
+      <th style="cursor:default;">Player</th>
+      <th style="cursor:default;">Pos</th>
+      <th onclick="sortMyDraftTable('pts')" class="${myDraftSort.col==='pts'?'sorted':''}">Pts for you</th>
+      <th onclick="sortMyDraftTable('starts')" class="${myDraftSort.col==='starts'?'sorted':''}">Starts</th>
+    </tr></thead>
     <tbody>${picks.map(p => `<tr>
       <td>${seasonLabel(p.year)}</td>
-      <td>${p.round}</td>
-      <td>${p.pickNo}</td>
-      <td>${p.pid ? `<a href="#" onclick="openPlayerModal('${p.pid}');return false;">${p.name}</a>` : p.name}</td>
-      <td style="font-family:var(--font-mono);">${p.pts > 0 ? p.pts.toFixed(1) : '—'}</td>
+      <td style="font-family:var(--font-mono);">${p.round}.${String(p.pickNo).padStart(2,'0')}</td>
+      <td>${p.pid ? `<span class="player-link" onclick="openPlayerModal('${p.pid}');return false;">${p.name}</span>` : p.name}</td>
+      <td>${renderPositionBadge(p.positions)}</td>
+      <td style="font-family:var(--font-mono);">${p.pts > 0 ? fmtNum(p.pts) : '—'}</td>
       <td style="font-family:var(--font-mono);">${p.starts || '—'}</td>
     </tr>`).join('')}</tbody>
   </table>`;
@@ -1857,6 +2067,25 @@ function renderMyTradesPanel(){
     el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your trades.</div>`;
     return;
   }
+  el.innerHTML = `
+    <div style="margin-bottom:16px;">
+      <select id="mytrades-sort-filter" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+        <option value="recent">Most Recent</option>
+        <option value="combined">Most Combined Points</option>
+        <option value="winner">Most Points (Winning Side)</option>
+        <option value="loser">Most Points (Losing Side)</option>
+      </select>
+    </div>
+    <div id="mytrades-list"></div>
+  `;
+  document.getElementById('mytrades-sort-filter').addEventListener('change', renderMyTradesList);
+  renderMyTradesList();
+}
+
+function renderMyTradesList(){
+  const el = document.getElementById('mytrades-list');
+  const sortF = document.getElementById('mytrades-sort-filter')?.value || 'recent';
+
   const myRosterIds = new Set();
   Object.values(DB.seasons).forEach(s => {
     (s.teams||[]).forEach(t => { if(t.managerKey === DB.myManagerKey) myRosterIds.add(t.rosterId); });
@@ -1865,21 +2094,38 @@ function renderMyTradesPanel(){
   const myTrades = DB.transactions.filter(t => (t.roster_ids||[]).some(r => myRosterIds.has(r)));
   if(!myTrades.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-arrows-exchange"></i>No trades found on your roster.</div>`; return; }
 
-  myTrades.sort((a,b) => b.year-a.year || b.week-a.week);
-
-  el.innerHTML = myTrades.map(t => {
+  const tradeData = myTrades.map(t => {
     const season = DB.seasons[t.year];
     const [r1, r2] = t.roster_ids || [0,0];
     const mk1 = season ? season.rosterIdToManagerKey[r1] : null;
     const mk2 = season ? season.rosterIdToManagerKey[r2] : null;
     const adds = t.adds || {};
-    const buildSide = (rid) => Object.entries(adds).filter(([,r]) => r === rid).map(([pid]) => {
-      const meta = DB.playerMeta[pid] || {};
-      const pts = DB.allStarters.filter(s => s.pid === pid && s.year >= t.year && s.teamRosterId === rid).reduce((a,b) => a+(b.points||0), 0);
-      return {name: meta.name || pid, pts};
-    });
+    const buildSide = (rid) => {
+      const items = Object.entries(adds).filter(([,r]) => r === rid).map(([pid]) => {
+        const meta = DB.playerMeta[pid] || {};
+        const pts = DB.allStarters.filter(s => s.pid === pid && s.year >= t.year && s.teamRosterId === rid).reduce((a,b) => a+(b.points||0), 0);
+        return {name: meta.name || pid, pts};
+      });
+      (t.draft_picks || []).filter(p => p.owner_id === rid).forEach(p => {
+        items.push({name:`${p.season || t.year} Round ${p.round} pick`, pts:0});
+      });
+      return items;
+    };
     const side1 = buildSide(r1), side2 = buildSide(r2);
+    const total1 = side1.reduce((a,b)=>a+b.pts,0), total2 = side2.reduce((a,b)=>a+b.pts,0);
+    return {t, mk1, mk2, side1, side2, total1, total2, combined: total1+total2, winnerTotal: Math.max(total1,total2), loserTotal: Math.min(total1,total2)};
+  });
 
+  const sortFns = {
+    recent:(a,b) => b.t.year-a.t.year || b.t.week-a.t.week,
+    combined:(a,b) => b.combined-a.combined,
+    winner:(a,b) => b.winnerTotal-a.winnerTotal,
+    loser:(a,b) => b.loserTotal-a.loserTotal
+  };
+  tradeData.sort(sortFns[sortF] || sortFns.recent);
+
+  el.innerHTML = tradeData.map(({t, mk1, mk2, side1, side2, total1, total2}) => {
+    const t1Wins = total1 >= total2;
     return `<div class="card" style="margin-bottom:12px;">
       <div style="display:flex;justify-content:space-between;color:var(--text-faint);font-size:11.5px;margin-bottom:10px;">
         <span>${seasonLabel(t.year)} \u00b7 Week ${t.week}</span>
@@ -1888,11 +2134,13 @@ function renderMyTradesPanel(){
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <div>
           <div style="font-weight:600;font-size:12.5px;margin-bottom:6px;">${(getManager(mk1)||{}).name||mk1} received${mk1===DB.myManagerKey?' (you)':''}</div>
-          ${side1.map(p => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;"><span>${p.name}</span><span style="color:var(--text-faint);">${p.pts>0?p.pts.toFixed(1)+' pts':'—'}</span></div>`).join('')}
+          ${side1.map(p => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;"><span>${p.name}</span><span style="color:var(--text-faint);">${p.pts>0?fmtNum(p.pts)+' pts':'—'}</span></div>`).join('') || '<div style="color:var(--text-faint);font-size:12px;">Draft picks only</div>'}
+          <div style="font-weight:700;font-size:12.5px;margin-top:6px;${t1Wins?'color:var(--good);':''}">${fmtNum(total1)} pts total${t1Wins?' \u2713':''}</div>
         </div>
         <div>
           <div style="font-weight:600;font-size:12.5px;margin-bottom:6px;">${(getManager(mk2)||{}).name||mk2} received${mk2===DB.myManagerKey?' (you)':''}</div>
-          ${side2.map(p => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;"><span>${p.name}</span><span style="color:var(--text-faint);">${p.pts>0?p.pts.toFixed(1)+' pts':'—'}</span></div>`).join('')}
+          ${side2.map(p => `<div style="display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0;"><span>${p.name}</span><span style="color:var(--text-faint);">${p.pts>0?fmtNum(p.pts)+' pts':'—'}</span></div>`).join('') || '<div style="color:var(--text-faint);font-size:12px;">Draft picks only</div>'}
+          <div style="font-weight:700;font-size:12.5px;margin-top:6px;${!t1Wins?'color:var(--good);':''}">${fmtNum(total2)} pts total${!t1Wins?' \u2713':''}</div>
         </div>
       </div>
     </div>`;
@@ -1906,7 +2154,7 @@ function renderMyTradesPanel(){
    to only that manager's own starts.
    ============================================================ */
 let myLineupMode = 'total';
-const MY_LINEUP_MODE_LABELS = {games:'Most starts', total:'All-time points', best:'Best single game'};
+const MY_LINEUP_MODE_LABELS = {games:'Most starts', total:'All-time points', season:'Best season', best:'Best single game'};
 
 function setMyLineupMode(mode){
   myLineupMode = mode;
@@ -1924,15 +2172,25 @@ function renderMyLineupPanel(){
 
   const byPid = {};
   myStarters.forEach(s => {
-    if(!byPid[s.pid]) byPid[s.pid] = {pid:s.pid, starts:0, total:0, best:0};
+    if(!byPid[s.pid]) byPid[s.pid] = {pid:s.pid, starts:0, total:0, best:0, seasonTotals:{}};
     byPid[s.pid].starts++;
     byPid[s.pid].total += (s.points||0);
     if((s.points||0) > byPid[s.pid].best) byPid[s.pid].best = s.points||0;
+    byPid[s.pid].seasonTotals[s.year] = (byPid[s.pid].seasonTotals[s.year]||0) + (s.points||0);
+  });
+  Object.values(byPid).forEach(p => {
+    let bestYear = null, bestTotal = 0;
+    Object.entries(p.seasonTotals).forEach(([yr, total]) => { if(total > bestTotal){ bestTotal = total; bestYear = Number(yr); } });
+    p.bestSeason = bestTotal;
+    p.bestSeasonYear = bestYear;
   });
 
-  const metric = {games:'starts', total:'total', best:'best'}[myLineupMode];
+  const metric = {games:'starts', total:'total', best:'best', season:'bestSeason'}[myLineupMode];
   let pool = Object.keys(byPid).sort((a,b) => byPid[b][metric] - byPid[a][metric]);
 
+  // Backend slot selection stays in scarcity-fill order (C,PF,SF,PG,SG,F,G,UTIL,UTIL,UTIL)
+  // — this algorithm is unchanged and working correctly. Only the DISPLAY is reordered
+  // to the conventional lineup reading order below.
   const roster = [];
   FLEX_FILL_ORDER.forEach(slot => {
     const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, CURRENT_SEASON));
@@ -1941,12 +2199,14 @@ function renderMyLineupPanel(){
     roster.push({slot, pid, ...byPid[pid], resolvedPosition: resolvePositionForSlot(pid, slot, CURRENT_SEASON)});
     pool.splice(idx,1);
   });
+  const displayRoster = [...roster].sort((a,b) => LINEUP_SLOTS.indexOf(a.slot) - LINEUP_SLOTS.indexOf(b.slot));
 
   const valueLabel = (r) => {
     if(!r.pid) return '';
     if(myLineupMode === 'games') return `${r.starts} starts`;
-    if(myLineupMode === 'best') return `${r.best.toFixed(1)} pts (best)`;
-    return `${r.total.toFixed(1)} pts`;
+    if(myLineupMode === 'best') return `${fmtNum(r.best)} pts (best)`;
+    if(myLineupMode === 'season') return r.bestSeasonYear ? `${fmtNum(r.bestSeason)} pts (${seasonLabel(r.bestSeasonYear)})` : '—';
+    return `${fmtNum(r.total)} pts`;
   };
 
   el.innerHTML = `
@@ -1956,11 +2216,11 @@ function renderMyLineupPanel(){
     </div>
     <div class="card" style="max-width:480px;">
       <div style="color:var(--text-faint);font-size:11px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;">${(getManager(DB.myManagerKey)||{}).name} \u00b7 ${MY_LINEUP_MODE_LABELS[myLineupMode]}</div>
-      ${roster.map(r => `
+      ${displayRoster.map(r => `
         <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border-soft);">
           <span style="width:38px;font-size:11px;color:var(--text-faint);font-weight:700;">${r.slot}</span>
           ${r.pid ? renderSlotBadge(r.resolvedPosition, r.slot) : ''}
-          <span style="flex:1;">${r.pid ? `<a href="#" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name||r.pid}</a>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</span>
+          <span style="flex:1;">${r.pid ? `<span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name||r.pid}</span>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</span>
           <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-dim);">${valueLabel(r)}</span>
         </div>`).join('')}
     </div>
@@ -1995,7 +2255,15 @@ function renderMyNbaPanel(){
 
   const maxApp = Math.max(...rows.map(r => r.appearances));
   el.innerHTML = `
-    <p style="color:var(--text-faint);font-size:11.5px;margin-bottom:14px;">NBA team reflects each player's current team in Sleeper \u2014 historical team at time of start may differ for traded players.</p>
+    <div class="card" style="border-color:var(--bad);margin-bottom:16px;">
+      <div style="display:flex;align-items:flex-start;gap:10px;">
+        <i class="ti ti-alert-triangle" style="color:var(--bad);font-size:18px;flex-shrink:0;margin-top:1px;"></i>
+        <div>
+          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">Known limitation \u2014 likely to change</div>
+          <div style="color:var(--text-dim);font-size:12.5px;line-height:1.5;">Sleeper only stores each player's <em>current</em> NBA team, not the team they were on at the time they were in your lineup. A player traded mid-career shows up entirely under their current team here, which can meaningfully misrepresent this breakdown for anyone who's changed teams. This page needs a rethink before it's trustworthy \u2014 treat it as a rough approximation for now.</div>
+        </div>
+      </div>
+    </div>
     <table class="data-table">
       <thead><tr><th>NBA Team</th><th>Appearances</th><th>Unique Players</th><th></th></tr></thead>
       <tbody>${rows.map(r => `<tr>
@@ -2034,7 +2302,8 @@ function renderMyTimelineFor(managerKey){
     <div class="card">
       <h3>${m.name}</h3>
       <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:10px;">Fellowship member ${seasonLabel(years[0])} – ${seasonLabel(years[years.length-1])}</div>
-      <table class="data-table">
+      <div style="overflow-x:auto;">
+      <table class="data-table table-scroll-min">
         <thead><tr><th>Season</th><th>Team Name</th><th>Record</th><th>PF</th><th>PA</th><th>Finish</th><th></th></tr></thead>
         <tbody>
           ${years.map(y => {
@@ -2043,8 +2312,8 @@ function renderMyTimelineFor(managerKey){
             let record = '—', pf = '—', pa = '—', finish = '—';
             if(team){
               record = `${team.wins}\u2013${team.losses}`;
-              pf = team.pf.toFixed(0);
-              pa = team.pa.toFixed(0);
+              pf = fmtNum(team.pf,0);
+              pa = fmtNum(team.pa,0);
               const ranked = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
               const rank = ranked.findIndex(t => t.managerKey === managerKey) + 1;
               if(rank > 0) finish = `#${rank} of ${ranked.length}`;
@@ -2056,12 +2325,13 @@ function renderMyTimelineFor(managerKey){
               <td style="font-family:var(--font-mono);">${record}</td>
               <td style="font-family:var(--font-mono);">${pf}</td>
               <td style="font-family:var(--font-mono);">${pa}</td>
-              <td>${finish}</td>
+              <td style="white-space:nowrap;">${finish}</td>
               <td>${isChamp ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : ''}</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>
+      </div>
     </div>
   `;
 }
@@ -2080,7 +2350,7 @@ function renderStandings(){
     <div class="card" style="margin-bottom:16px;">
       <h3>All-Time Standings</h3>
       <div style="overflow-x:auto;">
-        <table class="data-table">
+        <table class="data-table table-scroll-min">
           <thead><tr>
             <th style="cursor:default;">Manager</th>
             <th onclick="sortStandingsTable('wins')">W\u2013L</th>
@@ -2134,8 +2404,8 @@ function renderStandingsTableBody(){
     <td>${i+1}. ${(getManager(r.k)||{}).name || r.k}</td>
     <td style="font-family:var(--font-mono);">${r.wins}\u2013${r.losses}</td>
     <td style="font-family:var(--font-mono);">${(r.pct*100).toFixed(0)}%</td>
-    <td style="font-family:var(--font-mono);">${r.pf.toFixed(0)}</td>
-    <td style="font-family:var(--font-mono);">${r.pa.toFixed(0)}</td>
+    <td style="font-family:var(--font-mono);">${fmtNum(r.pf,0)}</td>
+    <td style="font-family:var(--font-mono);">${fmtNum(r.pa,0)}</td>
     <td style="font-family:var(--font-mono);">${r.titles || '—'}</td>
   </tr>`).join('');
 }
@@ -2165,7 +2435,8 @@ function renderPlayersPanel(){
         ${TRUE_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}
       </select>
     </div>
-    <div id="players-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="players-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
+    <div id="players-mgr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
     <div style="overflow-x:auto;">
       <table class="data-table">
         <thead><tr>
@@ -2194,6 +2465,18 @@ function renderPlayersPanel(){
     });
   });
 
+  const mgrKeys = Object.keys(MANAGERS).sort((a,b)=>MANAGERS[a].name.localeCompare(MANAGERS[b].name));
+  const selectedMgr = DB.selectedPlayersManager || 'all';
+  const mgrChipsEl = document.getElementById('players-mgr-chips');
+  mgrChipsEl.innerHTML = `<div class="yr-chip ${selectedMgr==='all'?'active':''}" data-mgr="all">All Managers</div>` +
+    mgrKeys.map(k => `<div class="yr-chip ${selectedMgr===k?'active':''}" data-mgr="${k}">${MANAGERS[k].name}</div>`).join('');
+  mgrChipsEl.querySelectorAll('.yr-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      DB.selectedPlayersManager = chip.dataset.mgr === 'all' ? 'all' : chip.dataset.mgr;
+      renderPlayersPanel();
+    });
+  });
+
   document.getElementById('players-search').addEventListener('input', renderPlayersTableBody);
   document.getElementById('players-pos-filter').addEventListener('change', renderPlayersTableBody);
 
@@ -2206,8 +2489,10 @@ function renderPlayersTableBody(){
   const search = normalizeNameForMatch(document.getElementById('players-search')?.value || '');
   const posFilter = document.getElementById('players-pos-filter')?.value || 'all';
   const selected = DB.selectedPlayersYear || 'all';
+  const selectedMgr = DB.selectedPlayersManager || 'all';
 
-  const starters = selected === 'all' ? DB.allStarters : DB.allStarters.filter(s => s.year === selected);
+  let starters = selected === 'all' ? DB.allStarters : DB.allStarters.filter(s => s.year === selected);
+  if(selectedMgr !== 'all') starters = starters.filter(s => s.managerKey === selectedMgr);
 
   const agg = {};
   starters.forEach(s => {
@@ -2238,7 +2523,7 @@ function renderPlayersTableBody(){
   if(!rows.length){ body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`; return; }
 
   body.innerHTML = rows.slice(0,200).map(r => `<tr>
-    <td><a href="#" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</a></td>
+    <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
     <td>${renderPositionBadge(r.positions)}</td>
     <td style="color:var(--text-dim);font-size:12px;">${r.teamAbbr}</td>
     <td>${r.total.toFixed(1)}</td>
@@ -2256,13 +2541,19 @@ function renderPlayersTableBody(){
 function renderLeagueTimeline(){
   const el = document.getElementById('leaguetimeline-body');
   const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
-  el.innerHTML = `<div style="display:flex;flex-direction:column;gap:10px;">
+  el.innerHTML = `<div class="timeline-rail">
     ${years.map(y => {
       const champ = FINAL_STANDINGS[y];
       const hasData = !!DB.seasons[y];
-      return `<div class="card" style="display:flex;align-items:center;gap:16px;">
-        <div style="font-family:var(--font-display);font-weight:700;font-size:18px;min-width:80px;">${seasonLabel(y)}</div>
-        ${champ ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>${getManagerDisplay(champ.champion, y)}</span>` : `<span style="color:var(--text-faint);font-size:12.5px;">${hasData ? 'Season in progress' : 'Not yet played'}</span>`}
+      return `<div class="timeline-item">
+        <div class="timeline-dot ${champ?'champ':''}"></div>
+        <div class="card">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+            <div style="font-family:var(--font-display);font-weight:700;font-size:17px;">${seasonLabel(y)}</div>
+            ${champ ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>${getManagerDisplay(champ.champion, y)}</span>` : `<span style="color:var(--text-faint);font-size:12.5px;">${hasData ? 'Season in progress' : 'Not yet played'}</span>`}
+          </div>
+          ${champ ? `<div style="color:var(--text-faint);font-size:11.5px;margin-top:8px;"><i class="ti ti-clock" style="font-size:11px;"></i> Finals matchup \u2014 coming soon</div>` : ''}
+        </div>
       </div>`;
     }).join('')}
   </div>`;
@@ -2299,28 +2590,7 @@ function renderLeagueH2HResult(){
   const el = document.getElementById('h2h-result');
   if(t1 === t2){ el.innerHTML = `<div class="empty-state"><i class="ti ti-versus"></i>Select two different managers.</div>`; return; }
 
-  const games = [];
-  Object.entries(DB.seasons).forEach(([yearStr, season]) => {
-    const year = Number(yearStr);
-    Object.entries(season.matchupsByWeek).forEach(([w, mus]) => {
-      const byId = {};
-      mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
-      Object.values(byId).forEach(pair => {
-        if(pair.length < 2) return;
-        const [a,b] = pair;
-        const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
-        const isT1A = ka===t1, isT1B = kb===t1, isT2A = ka===t2, isT2B = kb===t2;
-        if(!((isT1A && isT2B) || (isT1B && isT2A))) return;
-        const pt1 = isT1A ? (a.points||0) : (b.points||0);
-        const pt2 = isT2A ? (a.points||0) : (b.points||0);
-        games.push({year, week:Number(w), pt1, pt2});
-      });
-    });
-  });
-  games.sort((a,b) => b.year-a.year || b.week-a.week);
-
-  const t1w = games.filter(g => g.pt1 > g.pt2).length;
-  const t2w = games.filter(g => g.pt2 > g.pt1).length;
+  const {w1: t1w, w2: t2w, games} = computeAllTimeH2H(t1, t2);
   const t1Name = (getManager(t1)||{}).name, t2Name = (getManager(t2)||{}).name;
 
   el.innerHTML = `
@@ -2341,8 +2611,8 @@ function renderLeagueH2HResult(){
       <thead><tr><th>Season</th><th>Week</th><th>${t1Name}</th><th>${t2Name}</th></tr></thead>
       <tbody>${games.map(g => `<tr>
         <td>${seasonLabel(g.year)}</td><td>${g.week}</td>
-        <td style="font-family:var(--font-mono);${g.pt1>g.pt2?'font-weight:700;color:var(--good);':''}">${g.pt1.toFixed(1)}</td>
-        <td style="font-family:var(--font-mono);${g.pt2>g.pt1?'font-weight:700;color:var(--good);':''}">${g.pt2.toFixed(1)}</td>
+        <td style="font-family:var(--font-mono);${g.pt1>=g.pt2?'font-weight:700;color:var(--good);':''}">${fmtNum(g.pt1)}</td>
+        <td style="font-family:var(--font-mono);${g.pt2>g.pt1?'font-weight:700;color:var(--good);':''}">${fmtNum(g.pt2)}</td>
       </tr>`).join('')}</tbody>
     </table>` : `<div class="empty-state"><i class="ti ti-versus"></i>No head-to-head games found.</div>`}
   `;
@@ -2369,11 +2639,18 @@ function renderLeagueTradesPanel(){
         <option value="all">All managers</option>
         ${mgrOptions.map(k => `<option value="${k}">${MANAGERS[k].name}</option>`).join('')}
       </select>
+      <select id="trades-sort-filter" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
+        <option value="recent">Most Recent</option>
+        <option value="combined">Most Combined Points</option>
+        <option value="winner">Most Points (Winning Side)</option>
+        <option value="loser">Most Points (Losing Side)</option>
+      </select>
     </div>
     <div id="trades-list"></div>
   `;
   document.getElementById('trades-yr-filter').addEventListener('change', renderLeagueTradesList);
   document.getElementById('trades-mgr-filter').addEventListener('change', renderLeagueTradesList);
+  document.getElementById('trades-sort-filter').addEventListener('change', renderLeagueTradesList);
   renderLeagueTradesList();
 }
 
@@ -2381,6 +2658,7 @@ function renderLeagueTradesList(){
   const el = document.getElementById('trades-list');
   const yrF = document.getElementById('trades-yr-filter').value;
   const mgrF = document.getElementById('trades-mgr-filter').value;
+  const sortF = document.getElementById('trades-sort-filter')?.value || 'recent';
 
   let trades = [...DB.transactions];
   if(yrF !== 'all') trades = trades.filter(t => t.year === Number(yrF));
@@ -2404,10 +2682,16 @@ function renderLeagueTradesList(){
     };
     const side1 = buildSide(r1), side2 = buildSide(r2);
     const total1 = side1.reduce((a,b)=>a+b.pts,0), total2 = side2.reduce((a,b)=>a+b.pts,0);
-    return {t, mk1, mk2, side1, side2, total1, total2};
+    return {t, mk1, mk2, side1, side2, total1, total2, combined: total1+total2, winnerTotal: Math.max(total1,total2), loserTotal: Math.min(total1,total2)};
   }).filter(d => mgrF === 'all' || d.mk1 === mgrF || d.mk2 === mgrF);
 
-  tradeData.sort((a,b) => b.t.year-a.t.year || b.t.week-a.t.week);
+  const sortFns = {
+    recent:(a,b) => b.t.year-a.t.year || b.t.week-a.t.week,
+    combined:(a,b) => b.combined-a.combined,
+    winner:(a,b) => b.winnerTotal-a.winnerTotal,
+    loser:(a,b) => b.loserTotal-a.loserTotal
+  };
+  tradeData.sort(sortFns[sortF] || sortFns.recent);
 
   if(!tradeData.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-arrows-exchange"></i>No trades found.</div>`; return; }
 
@@ -2511,6 +2795,15 @@ function renderMatchupsGrid(){
 let pgXMetric = 'total';
 let pgYMetric = 'starts';
 let pgPosFilter = new Set(TRUE_POSITIONS);
+let pgYearFilter = null;   // Set, built on first render (includes 'startup' + every rookie draft year)
+let pgRoundFilter = null;  // Set, built on first render (rookie drafts only, per instructions)
+let pgMgrFilter = null;    // Set, built on first render (every manager key)
+let pgMinStarts = 0;
+let pgShowXMean = false, pgShowYMean = false, pgShowR2 = false;
+
+// Literal hex values matching the --pos-* CSS custom properties — Chart.js draws to a
+// raw canvas context and doesn't reliably resolve CSS variables there.
+const POSITION_HEX = {PG:'#e0503f', SG:'#e08a2f', SF:'#3fae5c', PF:'#3f83c9', C:'#9a5fc9'};
 
 const PG_METRICS = {
   total: {label:'Total Points', calc: p => p.total},
@@ -2526,11 +2819,68 @@ function togglePgPos(pos, el){
   else{ pgPosFilter.add(pos); el.classList.add('active'); }
   renderPgChart();
 }
+function togglePgYear(key, el){
+  if(pgYearFilter.has(key)){ pgYearFilter.delete(key); el.classList.remove('active'); }
+  else{ pgYearFilter.add(key); el.classList.add('active'); }
+  renderPgChart();
+}
+function togglePgRound(round, el){
+  if(pgRoundFilter.has(round)){ pgRoundFilter.delete(round); el.classList.remove('active'); }
+  else{ pgRoundFilter.add(round); el.classList.add('active'); }
+  renderPgChart();
+}
+function togglePgMgr(key, el){
+  if(pgMgrFilter.has(key)){ pgMgrFilter.delete(key); el.classList.remove('active'); }
+  else{ pgMgrFilter.add(key); el.classList.add('active'); }
+  renderPgChart();
+}
+function setPgMinStarts(val){
+  pgMinStarts = Math.max(0, Number(val) || 0);
+  renderPgChart();
+}
+function togglePgOverlay(overlay, el){
+  if(overlay==='xmean') pgShowXMean = !pgShowXMean;
+  if(overlay==='ymean') pgShowYMean = !pgShowYMean;
+  if(overlay==='r2') pgShowR2 = !pgShowR2;
+  el.classList.toggle('active');
+  renderPgChart();
+}
+
+// Maps every drafted player to their draft year (or 'startup'), round, and drafting manager.
+// Used by the year/round filter chips. Rounds only reflect rookie drafts, per instructions
+// to exclude the startup draft from round filtering (its "rounds" aren't comparable).
+function buildPlayerDraftInfo(){
+  const info = {};
+  const startupSeason = DB.seasons[FIRST_SEASON];
+  (DB.startupDraftPicks || []).forEach(p => {
+    if(!p.player_id) return;
+    info[p.player_id] = {year:'startup', round:null, managerKey: startupSeason ? startupSeason.rosterIdToManagerKey[p.roster_id] : null};
+  });
+  Object.entries(DB.draftPicks).forEach(([yr, picks]) => {
+    const season = DB.seasons[yr];
+    (picks || []).forEach(p => {
+      if(!p.player_id) return;
+      info[p.player_id] = {year:Number(yr), round:p.round, managerKey: season ? season.rosterIdToManagerKey[p.roster_id] : null};
+    });
+  });
+  return info;
+}
 
 function renderPlayerGraphsPanel(){
   const el = document.getElementById('playergraphs-body');
+  const draftInfo = buildPlayerDraftInfo();
+  const rounds = [...new Set(Object.values(draftInfo).filter(d => d.year !== 'startup').map(d => d.round))].sort((a,b)=>a-b);
+  const mgrKeys = Object.keys(MANAGERS).sort((a,b)=>MANAGERS[a].name.localeCompare(MANAGERS[b].name));
+  const rookieYears = Object.keys(ROOKIE_DRAFT_IDS).map(Number).sort((a,b)=>a-b);
+
+  // (Re)initialize filters to "everything selected" each time the panel is opened
+  pgYearFilter = new Set(['startup', ...rookieYears]);
+  pgRoundFilter = new Set(rounds);
+  pgMgrFilter = new Set(mgrKeys);
+  pgPosFilter = new Set(TRUE_POSITIONS);
+
   el.innerHTML = `
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
       <label style="font-size:11.5px;color:var(--text-faint);">X axis</label>
       <select id="pg-x-metric" style="padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:12.5px;">
         ${Object.entries(PG_METRICS).map(([k,m]) => `<option value="${k}" ${k===pgXMetric?'selected':''}>${m.label}</option>`).join('')}
@@ -2539,21 +2889,51 @@ function renderPlayerGraphsPanel(){
       <select id="pg-y-metric" style="padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:12.5px;">
         ${Object.entries(PG_METRICS).map(([k,m]) => `<option value="${k}" ${k===pgYMetric?'selected':''}>${m.label}</option>`).join('')}
       </select>
+      <label style="font-size:11.5px;color:var(--text-faint);margin-left:8px;">Min starts</label>
+      <input id="pg-min-starts" type="number" min="0" value="0" style="width:60px;padding:8px 10px;border-radius:var(--radius-sm);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:12.5px;">
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+
+    <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Position</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
       ${TRUE_POSITIONS.map(p => `<div class="yr-chip active" data-pos="${p}" onclick="togglePgPos('${p}', this)">${p}</div>`).join('')}
     </div>
+
+    <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Draft Year</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="yr-chip active" onclick="togglePgYear('startup', this)">Startup</div>
+      ${rookieYears.map(y => `<div class="yr-chip active" onclick="togglePgYear(${y}, this)">${seasonLabel(y)}</div>`).join('')}
+    </div>
+
+    <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Draft Round <span style="text-transform:none;">(startup excluded)</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+      ${rounds.map(r => `<div class="yr-chip active" onclick="togglePgRound(${r}, this)">Rd ${r}</div>`).join('')}
+    </div>
+
+    <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Drafted By</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      ${mgrKeys.map(k => `<div class="yr-chip active" onclick="togglePgMgr('${k}', this)">${MANAGERS[k].name}</div>`).join('')}
+    </div>
+
+    <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Overlays</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      <div class="yr-chip" onclick="togglePgOverlay('xmean', this)">X Mean</div>
+      <div class="yr-chip" onclick="togglePgOverlay('ymean', this)">Y Mean</div>
+      <div class="yr-chip" onclick="togglePgOverlay('r2', this)">Trendline + R\u00b2</div>
+    </div>
+
+    <div id="pg-r2-label" style="font-size:11.5px;color:var(--text-faint);margin-bottom:8px;"></div>
     <div style="background:var(--bg-panel);border:1px solid var(--border-soft);border-radius:var(--radius-md);padding:16px;">
       <canvas id="pg-canvas" height="110"></canvas>
     </div>
   `;
   document.getElementById('pg-x-metric').addEventListener('change', (e) => { pgXMetric = e.target.value; renderPgChart(); });
   document.getElementById('pg-y-metric').addEventListener('change', (e) => { pgYMetric = e.target.value; renderPgChart(); });
-  pgPosFilter = new Set(TRUE_POSITIONS);
+  document.getElementById('pg-min-starts').addEventListener('input', (e) => setPgMinStarts(e.target.value));
   renderPgChart();
 }
 
 function renderPgChart(){
+  const draftInfo = buildPlayerDraftInfo();
   const potgLog = computePotgData('all');
   const potgCounts = {}, potwCounts = {};
   potgLog.forEach(e => {
@@ -2571,30 +2951,86 @@ function renderPgChart(){
 
   const points = Object.values(agg).map(p => {
     const positions = getPlayerPositions(p.pid, CURRENT_SEASON);
+    const di = draftInfo[p.pid];
     return {...p, avg: p.starts ? p.total/p.starts : 0, potg: potgCounts[p.pid]||0, potw: potwCounts[p.pid]||0,
-      positions, name: (DB.playerMeta[p.pid]||{}).name || p.pid};
-  }).filter(p => p.positions.some(pos => pgPosFilter.has(pos)));
+      positions, primaryPos: positions[0] || null, name: (DB.playerMeta[p.pid]||{}).name || p.pid, draftInfo: di};
+  }).filter(p => {
+    if(p.starts < pgMinStarts) return false;
+    if(!p.positions.some(pos => pgPosFilter.has(pos))) return false;
+    // Draft year/round/manager filters only exclude players who HAVE a matching draft
+    // record that's been deselected — undrafted (FA) players always pass through, since
+    // these filters describe draft class membership, not roster membership.
+    if(p.draftInfo){
+      if(!pgYearFilter.has(p.draftInfo.year)) return false;
+      if(p.draftInfo.year !== 'startup' && p.draftInfo.round != null && !pgRoundFilter.has(p.draftInfo.round)) return false;
+      if(p.draftInfo.managerKey && !pgMgrFilter.has(p.draftInfo.managerKey)) return false;
+    }
+    return true;
+  });
 
   const xCalc = PG_METRICS[pgXMetric].calc, yCalc = PG_METRICS[pgYMetric].calc;
-  const dataPoints = points.map(p => ({x:xCalc(p), y:yCalc(p), name:p.name, pid:p.pid}));
+  const dataPoints = points.map(p => ({x:xCalc(p), y:yCalc(p), name:p.name, pid:p.pid, color: POSITION_HEX[p.primaryPos] || '#9aa2ad'}));
+
+  const datasets = [{
+    label:'Players', data:dataPoints,
+    backgroundColor: dataPoints.map(p => p.color),
+    pointRadius:4, pointHoverRadius:6
+  }];
+
+  const xs = dataPoints.map(p=>p.x), ys = dataPoints.map(p=>p.y);
+  const xMin = Math.min(...xs, 0), xMax = Math.max(...xs, 1);
+
+  if(pgShowXMean && xs.length){
+    const meanX = xs.reduce((a,b)=>a+b,0)/xs.length;
+    const yMin = Math.min(...ys, 0), yMax = Math.max(...ys, 1);
+    datasets.push({type:'line', label:'X Mean', data:[{x:meanX,y:yMin},{x:meanX,y:yMax}], borderColor:'#e0503f', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false});
+  }
+  if(pgShowYMean && ys.length){
+    const meanY = ys.reduce((a,b)=>a+b,0)/ys.length;
+    datasets.push({type:'line', label:'Y Mean', data:[{x:xMin,y:meanY},{x:xMax,y:meanY}], borderColor:'#3f83c9', borderWidth:1.5, borderDash:[5,4], pointRadius:0, fill:false});
+  }
+
+  const r2Label = document.getElementById('pg-r2-label');
+  if(pgShowR2 && xs.length > 1){
+    // Simple least-squares linear regression
+    const n = xs.length;
+    const sumX = xs.reduce((a,b)=>a+b,0), sumY = ys.reduce((a,b)=>a+b,0);
+    const sumXY = xs.reduce((a,x,i)=>a+x*ys[i],0), sumXX = xs.reduce((a,x)=>a+x*x,0);
+    const denom = (n*sumXX - sumX*sumX);
+    if(denom !== 0){
+      const slope = (n*sumXY - sumX*sumY) / denom;
+      const intercept = (sumY - slope*sumX) / n;
+      const meanY2 = sumY/n;
+      const ssTot = ys.reduce((a,y)=>a+(y-meanY2)**2,0);
+      const ssRes = ys.reduce((a,y,i)=>a+(y-(slope*xs[i]+intercept))**2,0);
+      const r2 = ssTot ? 1 - (ssRes/ssTot) : 0;
+      datasets.push({type:'line', label:'Trendline', data:[{x:xMin,y:slope*xMin+intercept},{x:xMax,y:slope*xMax+intercept}], borderColor:'#e8823a', borderWidth:2, pointRadius:0, fill:false});
+      if(r2Label) r2Label.textContent = `R\u00b2 = ${r2.toFixed(3)} (n=${n})`;
+    }
+  } else if(r2Label){
+    r2Label.textContent = '';
+  }
 
   if(DB.charts['pg']) DB.charts['pg'].destroy();
   const ctx = document.getElementById('pg-canvas');
   if(!ctx) return;
   DB.charts['pg'] = new Chart(ctx, {
     type:'scatter',
-    data:{datasets:[{label:'Players', data:dataPoints, backgroundColor:'rgba(232,130,58,0.6)'}]},
+    data:{datasets},
     options:{
       responsive:true,
       plugins:{
         legend:{display:false},
-        tooltip:{callbacks:{label:(c) => `${c.raw.name}: (${c.raw.x.toFixed(1)}, ${c.raw.y.toFixed(1)})`}}
+        tooltip:{filter: (item) => item.datasetIndex===0, callbacks:{label:(c) => `${c.raw.name}: (${fmtNum(c.raw.x)}, ${fmtNum(c.raw.y)})`}}
       },
       scales:{
         x:{title:{display:true, text:PG_METRICS[pgXMetric].label, color:'#9aa2ad'}, ticks:{color:'#9aa2ad'}, grid:{color:'#1a1e24'}},
         y:{title:{display:true, text:PG_METRICS[pgYMetric].label, color:'#9aa2ad'}, ticks:{color:'#9aa2ad'}, grid:{color:'#1a1e24'}}
       },
-      onClick:(evt, elements) => { if(elements.length) openPlayerModal(dataPoints[elements[0].index].pid); }
+      onClick:(evt, elements) => {
+        const hit = elements.find(el => el.datasetIndex === 0);
+        if(hit) openPlayerModal(dataPoints[hit.index].pid);
+      }
     }
   });
 }
@@ -2604,6 +3040,76 @@ function renderPgChart(){
    Actual vs. projected scoring, at both the player and manager level.
    Only meaningful for 2020+ seasons (see loadSeasonScoring).
    ============================================================ */
+/* ============================================================
+   PROJECTIONS — LUCK ANALYSIS
+   A "lucky win" is a matchup where the winner's team had a LOWER combined
+   projection than the loser's team but won anyway; an "unlucky loss" is
+   the same event, framed from the losing side. Skips weeks where either
+   team's projected total is under 5 (usually missing-data weeks, not
+   meaningful projections).
+   ============================================================ */
+function computeLuckGames(){
+  const lucky = [], unlucky = [];
+  Object.entries(DB.seasons).forEach(([yearStr, season]) => {
+    const year = Number(yearStr);
+    Object.entries(season.matchupsByWeek || {}).forEach(([wStr, mus]) => {
+      const week = Number(wStr);
+      const byId = {};
+      mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
+      Object.values(byId).forEach(pair => {
+        if(pair.length < 2) return;
+        const [a,b] = pair;
+        const projFor = (rid) => DB.allStarters
+          .filter(s => s.year===year && s.week===week && s.teamRosterId===rid && s.projected != null)
+          .reduce((sum,s) => sum + (s.projected||0), 0);
+        const aProj = projFor(a.roster_id), bProj = projFor(b.roster_id);
+        if(aProj < 5 || bProj < 5) return;
+        const aAct = a.points||0, bAct = b.points||0;
+        const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
+        const aWon = aAct > bAct;
+        const game = {
+          year, week,
+          winner: aWon?ka:kb, loser: aWon?kb:ka,
+          winAct: aWon?aAct:bAct, loseAct: aWon?bAct:aAct,
+          winProj: aWon?aProj:bProj, loseProj: aWon?bProj:aProj
+        };
+        if(game.winProj < game.loseProj) lucky.push(game);
+        else if(game.winProj > game.loseProj) unlucky.push(game);
+      });
+    });
+  });
+  lucky.sort((a,b) => (b.loseProj-b.winProj) - (a.loseProj-a.winProj));
+  unlucky.sort((a,b) => (b.winProj-b.loseProj) - (a.winProj-a.loseProj));
+  return {lucky, unlucky};
+}
+
+function renderLuckRundown(){
+  const {lucky, unlucky} = computeLuckGames();
+  const fmtLucky = g => `<div class="card" style="margin-bottom:8px;border-left:3px solid var(--good);">
+    <div style="font-size:10px;color:var(--good);text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:4px;">Lucky Win</div>
+    <div style="font-size:13px;">${(getManager(g.winner)||{}).name||g.winner} def. ${(getManager(g.loser)||{}).name||g.loser} (${fmtNum(g.winAct)}\u2013${fmtNum(g.loseAct)})</div>
+    <div style="font-size:11px;color:var(--text-faint);margin-top:2px;">${seasonLabel(g.year)} Wk ${g.week} \u00b7 Projected: ${fmtNum(g.winProj)} vs ${fmtNum(g.loseProj)}</div>
+  </div>`;
+  const fmtUnlucky = g => `<div class="card" style="margin-bottom:8px;border-left:3px solid var(--bad);">
+    <div style="font-size:10px;color:var(--bad);text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:4px;">Unlucky Loss</div>
+    <div style="font-size:13px;">${(getManager(g.loser)||{}).name||g.loser} lost to ${(getManager(g.winner)||{}).name||g.winner} (${fmtNum(g.loseAct)}\u2013${fmtNum(g.winAct)})</div>
+    <div style="font-size:11px;color:var(--text-faint);margin-top:2px;">${seasonLabel(g.year)} Wk ${g.week} \u00b7 Projected: ${fmtNum(g.loseProj)} vs ${fmtNum(g.winProj)}</div>
+  </div>`;
+
+  return `
+    <h3 style="margin-bottom:10px;">Lucky Wins</h3>
+    <div style="margin-bottom:20px;">${lucky.slice(0,10).map(fmtLucky).join('') || '<div class="empty-state" style="padding:16px;">No data yet.</div>'}</div>
+    <h3 style="margin-bottom:10px;">Unlucky Losses</h3>
+    <div style="margin-bottom:26px;">${unlucky.slice(0,10).map(fmtUnlucky).join('') || '<div class="empty-state" style="padding:16px;">No data yet.</div>'}</div>
+  `;
+}
+
+let projSort = {col:'diff', dir:-1};
+function sortProjTable(col){
+  projSort = projSort.col === col ? {col, dir: projSort.dir * -1} : {col, dir:-1};
+  renderProjectionsPanel();
+}
+
 function renderProjectionsPanel(){
   const el = document.getElementById('projections-body');
   const withProj = DB.allStarters.filter(s => s.projected != null && s.points != null);
@@ -2620,10 +3126,17 @@ function renderProjectionsPanel(){
     pAgg[s.pid].starts++;
     if(s.points >= s.projected) pAgg[s.pid].beat++;
   });
-  const rows = Object.values(pAgg).map(d => {
+  let rows = Object.values(pAgg).map(d => {
     const diff = d.pts - d.proj;
     return {...d, name:(DB.playerMeta[d.pid]||{}).name || d.pid, diff, avgDiff: diff/d.starts};
-  }).sort((a,b) => b.diff - a.diff);
+  });
+
+  const dir = projSort.dir;
+  const sf = {
+    diff:(a,b)=>(a.diff-b.diff)*dir, avgDiff:(a,b)=>(a.avgDiff-b.avgDiff)*dir,
+    starts:(a,b)=>(a.starts-b.starts)*dir, pts:(a,b)=>(a.pts-b.pts)*dir
+  };
+  rows.sort(sf[projSort.col] || sf.diff);
 
   const mgrAgg = {};
   withProj.forEach(s => {
@@ -2636,6 +3149,7 @@ function renderProjectionsPanel(){
   const mgrRows = Object.values(mgrAgg).map(d => ({...d, diff: d.pts-d.proj, avgDiff:(d.pts-d.proj)/d.starts})).sort((a,b) => b.diff-a.diff);
 
   el.innerHTML = `
+    ${renderLuckRundown()}
     <div class="card" style="margin-bottom:16px;">
       <h3>Managers: Actual vs. Projected</h3>
       <table class="data-table">
@@ -2643,53 +3157,104 @@ function renderProjectionsPanel(){
         <tbody>${mgrRows.map(r => `<tr>
           <td>${(getManager(r.k)||{}).name||r.k}</td>
           <td style="font-family:var(--font-mono);">${r.starts}</td>
-          <td style="font-family:var(--font-mono);">${r.pts.toFixed(1)}</td>
-          <td style="font-family:var(--font-mono);">${r.proj.toFixed(1)}</td>
-          <td style="font-family:var(--font-mono);${r.diff>=0?'color:var(--good);':'color:var(--bad);'}">${r.diff>=0?'+':''}${r.diff.toFixed(1)}</td>
-          <td style="font-family:var(--font-mono);${r.avgDiff>=0?'color:var(--good);':'color:var(--bad);'}">${r.avgDiff>=0?'+':''}${r.avgDiff.toFixed(1)}</td>
+          <td style="font-family:var(--font-mono);">${fmtNum(r.pts)}</td>
+          <td style="font-family:var(--font-mono);">${fmtNum(r.proj)}</td>
+          <td style="font-family:var(--font-mono);${r.diff>=0?'color:var(--good);':'color:var(--bad);'}">${r.diff>=0?'+':''}${fmtNum(r.diff)}</td>
+          <td style="font-family:var(--font-mono);${r.avgDiff>=0?'color:var(--good);':'color:var(--bad);'}">${r.avgDiff>=0?'+':''}${fmtNum(r.avgDiff)}</td>
         </tr>`).join('')}</tbody>
       </table>
     </div>
     <div class="card">
-      <h3>Players: Biggest Over/Under-Performers</h3>
-      <table class="data-table">
-        <thead><tr><th>Player</th><th>Starts</th><th>Actual</th><th>Projected</th><th>Diff</th><th>Avg Diff</th><th>Beat %</th></tr></thead>
-        <tbody>${rows.slice(0,150).map(r => {
-          const beatPct = r.starts ? Math.round(r.beat/r.starts*100) : 0;
-          return `<tr>
-            <td><a href="#" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</a></td>
-            <td style="font-family:var(--font-mono);">${r.starts}</td>
-            <td style="font-family:var(--font-mono);">${r.pts.toFixed(1)}</td>
-            <td style="font-family:var(--font-mono);">${r.proj.toFixed(1)}</td>
-            <td style="font-family:var(--font-mono);${r.diff>=0?'color:var(--good);':'color:var(--bad);'}">${r.diff>=0?'+':''}${r.diff.toFixed(1)}</td>
-            <td style="font-family:var(--font-mono);${r.avgDiff>=0?'color:var(--good);':'color:var(--bad);'}">${r.avgDiff>=0?'+':''}${r.avgDiff.toFixed(1)}</td>
-            <td style="font-family:var(--font-mono);">${beatPct}%</td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
+      <h3>Players: Actual vs. Projected</h3>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th style="cursor:default;">Player</th>
+            <th onclick="sortProjTable('starts')" class="${projSort.col==='starts'?'sorted':''}">Starts</th>
+            <th onclick="sortProjTable('pts')" class="${projSort.col==='pts'?'sorted':''}">Actual</th>
+            <th style="cursor:default;">Projected</th>
+            <th onclick="sortProjTable('diff')" class="${projSort.col==='diff'?'sorted':''}">Diff</th>
+            <th onclick="sortProjTable('avgDiff')" class="${projSort.col==='avgDiff'?'sorted':''}">Avg Diff</th>
+            <th style="cursor:default;">Beat %</th>
+          </tr></thead>
+          <tbody>${rows.slice(0,150).map(r => {
+            const beatPct = r.starts ? Math.round(r.beat/r.starts*100) : 0;
+            return `<tr>
+              <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
+              <td style="font-family:var(--font-mono);">${r.starts}</td>
+              <td style="font-family:var(--font-mono);">${fmtNum(r.pts)}</td>
+              <td style="font-family:var(--font-mono);">${fmtNum(r.proj)}</td>
+              <td style="font-family:var(--font-mono);${r.diff>=0?'color:var(--good);':'color:var(--bad);'}">${r.diff>=0?'+':''}${fmtNum(r.diff)}</td>
+              <td style="font-family:var(--font-mono);${r.avgDiff>=0?'color:var(--good);':'color:var(--bad);'}">${r.avgDiff>=0?'+':''}${fmtNum(r.avgDiff)}</td>
+              <td style="font-family:var(--font-mono);">${beatPct}%</td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
     </div>
   `;
 }
 
+
+let draftSort = {col:'pick_no', dir:1};
+let currentDraftYear = null;
+
+function sortDraftTable(col){
+  draftSort = draftSort.col === col ? {col, dir: draftSort.dir * -1} : {col, dir: col==='pick_no' ? 1 : -1};
+  renderDraftFor(currentDraftYear);
+}
+
 function renderDraft(){
   const el = document.getElementById('draft-body');
+  currentDraftYear = DB.selectedSeason || (CURRENT_SEASON - 1);
   el.innerHTML = `
     <div id="draft-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
-    <div id="draft-table" class="empty-state"><i class="ti ti-clipboard-list"></i>Load draft picks (loadAllDraftPicks / loadStartupDraft) to populate this view.</div>
+    <div id="draft-table"></div>
   `;
-  renderYearChips('draft-yr-chips', (y)=>{ renderDraftFor(y); }, DB.selectedSeason);
+  renderYearChips('draft-yr-chips', (y)=>{ renderDraftFor(y); }, currentDraftYear);
+  renderDraftFor(currentDraftYear); // load immediately, no click required
 }
 
 function renderDraftFor(year){
+  currentDraftYear = year;
   const el = document.getElementById('draft-table');
   const picks = year===FIRST_SEASON ? DB.startupDraftPicks : (DB.draftPicks[year]||[]);
   if(!picks.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-clipboard-list"></i>No draft data loaded for ${seasonLabel(year)} yet.</div>`; return; }
+
+  const season = DB.seasons[year];
+  let rows = picks.map(p => {
+    const managerKey = season ? season.rosterIdToManagerKey[p.roster_id] : null;
+    const name = (p.metadata && p.metadata.first_name) ? `${p.metadata.first_name} ${p.metadata.last_name}` : (p.player_id || 'Unknown');
+    const myStarts = p.player_id ? DB.allStarters.filter(s => s.pid === p.player_id && s.managerKey === managerKey) : [];
+    const pts = myStarts.reduce((a,b) => a+(b.points||0), 0);
+    const positions = p.player_id ? getPlayerPositions(p.player_id, CURRENT_SEASON) : [];
+    return {round:p.round, pickNo:p.pick_no, pid:p.player_id, name, managerKey, pts, starts:myStarts.length, positions};
+  });
+
+  const dir = draftSort.dir;
+  const sf = {
+    pick_no:(a,b) => (a.pickNo-b.pickNo)*dir,
+    pts:(a,b) => (a.pts-b.pts)*dir,
+    starts:(a,b) => (a.starts-b.starts)*dir
+  };
+  rows.sort(sf[draftSort.col] || sf.pick_no);
+
   el.innerHTML = `<table class="data-table">
-    <thead><tr><th>Rd</th><th>Pick</th><th>Player</th><th>Manager</th></tr></thead>
-    <tbody>${picks.map(p => `<tr>
-      <td>${p.round}</td><td>${p.pick_no}</td>
-      <td>${(p.metadata && p.metadata.first_name) ? `${p.metadata.first_name} ${p.metadata.last_name}` : p.player_id}</td>
-      <td>${MANAGERS[DB.seasons[year] && DB.seasons[year].rosterIdToManagerKey[p.roster_id]] ? MANAGERS[DB.seasons[year].rosterIdToManagerKey[p.roster_id]].name : '—'}</td>
+    <thead><tr>
+      <th onclick="sortDraftTable('pick_no')" class="${draftSort.col==='pick_no'?'sorted':''}">Rd \u00b7 Pick</th>
+      <th style="cursor:default;">Player</th>
+      <th style="cursor:default;">Pos</th>
+      <th style="cursor:default;">Manager</th>
+      <th onclick="sortDraftTable('pts')" class="${draftSort.col==='pts'?'sorted':''}">Pts Scored</th>
+      <th onclick="sortDraftTable('starts')" class="${draftSort.col==='starts'?'sorted':''}">Starts</th>
+    </tr></thead>
+    <tbody>${rows.map(r => `<tr>
+      <td style="font-family:var(--font-mono);">${r.round}.${String(r.pickNo).padStart(2,'0')}</td>
+      <td>${r.pid ? `<span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span>` : r.name}</td>
+      <td>${renderPositionBadge(r.positions)}</td>
+      <td>${(getManager(r.managerKey)||{}).name || '—'}</td>
+      <td>${r.pts > 0 ? fmtNum(r.pts) : '—'}</td>
+      <td>${r.starts || '—'}</td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
@@ -2699,20 +3264,22 @@ function renderHonorsRoster(roster, year){
     <thead><tr><th>Slot</th><th>Player</th><th>Pos</th><th>Lineup Pts</th></tr></thead>
     <tbody>${roster.map(r => `<tr>
       <td>${r.slot}</td>
-      <td>${r.pid ? `<a href="#" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name || r.pid}</a>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</td>
+      <td>${r.pid ? `<span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name || r.pid}</span>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</td>
       <td>${r.pid ? renderSlotBadge(r.resolvedPosition, r.slot) : ''}</td>
-      <td>${r.points ? r.points.toFixed(1) : '—'}</td>
+      <td>${r.points ? fmtNum(r.points) : '—'}</td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
 
 function renderAwardsPanel(){
   const el = document.getElementById('awards-body');
+  const year = DB.selectedSeason || (CURRENT_SEASON - 1);
   el.innerHTML = `
     <div id="awards-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
-    <div id="awards-detail" class="empty-state"><i class="ti ti-medal"></i>Build honors for a season (buildHonorsForYear) to populate All-Docile / All-Rookie teams.</div>
+    <div id="awards-detail"></div>
   `;
-  renderYearChips('awards-yr-chips', (y)=>{ renderAwardsFor(y); }, DB.selectedSeason);
+  renderYearChips('awards-yr-chips', (y)=>{ renderAwardsFor(y); }, year);
+  renderAwardsFor(year); // load immediately, no click required
 }
 
 function renderAwardsFor(year){
@@ -2721,47 +3288,131 @@ function renderAwardsFor(year){
   const rookie = DB.awards.allRookie[year];
   if(!docile){ el.innerHTML = `<div class="empty-state"><i class="ti ti-medal"></i>No honors data built for ${seasonLabel(year)} yet.</div>`; return; }
   el.innerHTML = `
-    <h3>All-Docile — ${seasonLabel(year)}</h3>
-    <div class="card-grid">
-      ${[1,2,3].map(t => `<div class="card"><h4>${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(docile[t], year)}</div>`).join('')}
+    <h3 style="margin-bottom:14px;">All-Docile — ${seasonLabel(year)}</h3>
+    <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
+      ${[1,2,3].map(t => `<div class="card"><h4 style="margin-bottom:10px;">${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(docile[t], year)}</div>`).join('')}
     </div>
-    <h3 style="margin-top:24px;">All-Rookie — ${seasonLabel(year)}</h3>
-    <div class="card-grid">
-      ${[1,2,3].map(t => `<div class="card"><h4>${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(rookie[t], year)}</div>`).join('')}
-    </div>
+    <h3 style="margin-bottom:14px;">All-Rookie Team — ${seasonLabel(year)}</h3>
+    <div class="card">${renderHonorsRoster((rookie && rookie[1]) || [], year)}</div>
   `;
+}
+
+/* ============================================================
+   POTG / POTW
+   Football-style layout: an aggregate leaderboard on top (career or
+   multi-season, toggle by season with independent chips) and a full
+   week-by-week log beneath it.
+   ============================================================ */
+let potgSort = {col:'potg', dir:-1};
+let potgActiveYears = new Set();
+
+function sortPotgTable(col){
+  potgSort = potgSort.col === col ? {col, dir: potgSort.dir * -1} : {col, dir:-1};
+  renderPotgLeaderboard();
+}
+
+function togglePotgAllYears(){
+  const years = Object.keys(LEAGUE_IDS).map(Number);
+  const allActive = potgActiveYears.size === years.length;
+  potgActiveYears = allActive ? new Set() : new Set(years.map(String));
+  document.getElementById('potg-all-chip').classList.toggle('active', !allActive);
+  document.querySelectorAll('#potg-yr-chips [data-year]').forEach(chip => chip.classList.toggle('active', !allActive));
+  renderPotgLeaderboard();
+}
+
+function togglePotgYear(year, chip){
+  const key = String(year);
+  if(potgActiveYears.has(key)) potgActiveYears.delete(key); else potgActiveYears.add(key);
+  chip.classList.toggle('active');
+  const years = Object.keys(LEAGUE_IDS).map(Number);
+  document.getElementById('potg-all-chip').classList.toggle('active', potgActiveYears.size === years.length);
+  renderPotgLeaderboard();
 }
 
 function renderPotgPanel(){
   const el = document.getElementById('potg-body');
+  const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
+  potgActiveYears = new Set(years.map(String));
   el.innerHTML = `
-    <div id="potg-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
-    <div id="potg-detail" class="empty-state"><i class="ti ti-flame"></i>Build honors for a season to populate weekly POTG/POTW.</div>
+    <div id="potg-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;">
+      <div class="yr-chip active" id="potg-all-chip" onclick="togglePotgAllYears()">All seasons</div>
+      ${years.map(y => `<div class="yr-chip active" data-year="${y}" onclick="togglePotgYear(${y}, this)">${seasonLabel(y)}</div>`).join('')}
+    </div>
+    <h3 style="margin-bottom:10px;">POTG / POTW Leaderboard</h3>
+    <div style="overflow-x:auto;margin-bottom:26px;">
+      <table class="data-table">
+        <thead><tr>
+          <th style="cursor:default;">#</th>
+          <th style="cursor:default;">Player</th>
+          <th style="cursor:default;">Pos</th>
+          <th onclick="sortPotgTable('potg')" class="${potgSort.col==='potg'?'sorted':''}">POTGs</th>
+          <th onclick="sortPotgTable('potw')" class="${potgSort.col==='potw'?'sorted':''}">POTWs</th>
+          <th onclick="sortPotgTable('best')" class="${potgSort.col==='best'?'sorted':''}">Best Score</th>
+        </tr></thead>
+        <tbody id="potg-leaderboard-body"></tbody>
+      </table>
+    </div>
+    <h3 style="margin-bottom:10px;">Full POTG Log</h3>
+    <div id="potg-log-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
+    <div style="overflow-x:auto;">
+      <table class="data-table">
+        <thead><tr><th>Season</th><th>Week</th><th>Player</th><th>Manager</th><th>Score</th><th>Type</th></tr></thead>
+        <tbody id="potg-log-body"></tbody>
+      </table>
+    </div>
   `;
-  renderYearChips('potg-yr-chips', (y)=>{ renderPotgFor(y); }, DB.selectedSeason);
+  renderYearChips('potg-log-yr-chips', (y) => renderPotgLog(y), DB.selectedSeason || (CURRENT_SEASON - 1));
+  renderPotgLeaderboard();
+  renderPotgLog(DB.selectedSeason || (CURRENT_SEASON - 1));
 }
 
-function renderPotgFor(year){
-  const el = document.getElementById('potg-detail');
-  const log = computePotgData(year);
-  if(!log.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-flame"></i>No award data for ${seasonLabel(year)} yet.</div>`; return; }
+function renderPotgLeaderboard(){
+  const body = document.getElementById('potg-leaderboard-body');
+  if(!body) return;
+  const allLog = computePotgData('all').filter(e => potgActiveYears.has(String(e.year)));
 
-  const byWeek = {};
-  log.forEach(e => { (byWeek[e.week] = byWeek[e.week] || []).push(e); });
-  const weeks = Object.keys(byWeek).map(Number).sort((a,b)=>a-b);
+  const byPlayer = {};
+  allLog.forEach(e => {
+    if(!byPlayer[e.pid]) byPlayer[e.pid] = {pid:e.pid, potg:0, potw:0, best:0};
+    byPlayer[e.pid].potg++;
+    if(e.type==='POTW') byPlayer[e.pid].potw++;
+    if(e.pts > byPlayer[e.pid].best) byPlayer[e.pid].best = e.pts;
+  });
 
-  el.innerHTML = `<table class="data-table">
-    <thead><tr><th>Week</th><th>Player of the Week</th><th>All Players of the Game</th></tr></thead>
-    <tbody>${weeks.map(w => {
-      const entries = byWeek[w];
-      const potw = entries.filter(e => e.type === 'POTW');
-      return `<tr>
-        <td>${w}</td>
-        <td>${potw.map(p => `<a href="#" onclick="openPlayerModal('${p.pid}');return false;">${(DB.playerMeta[p.pid]||{}).name||p.pid}</a> (${p.pts.toFixed(1)})`).join(' &amp; ')}</td>
-        <td>${entries.map(p => `${(DB.playerMeta[p.pid]||{}).name||p.pid} (${p.pts.toFixed(1)})`).join(', ')}</td>
-      </tr>`;
-    }).join('')}</tbody>
-  </table>`;
+  let rows = Object.values(byPlayer).map(p => {
+    const meta = DB.playerMeta[p.pid] || {};
+    return {...p, name: meta.name || `Player ${p.pid}`, positions: getPlayerPositions(p.pid, CURRENT_SEASON)};
+  });
+
+  const dir = potgSort.dir;
+  const sf = {potg:(a,b)=>(a.potg-b.potg)*dir, potw:(a,b)=>(a.potw-b.potw)*dir, best:(a,b)=>(a.best-b.best)*dir};
+  rows.sort(sf[potgSort.col] || sf.potg);
+
+  if(!rows.length){ body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-faint);padding:24px;">No data for this filter.</td></tr>`; return; }
+
+  body.innerHTML = rows.slice(0,50).map((r,i) => `<tr>
+    <td style="color:var(--text-faint);">${i+1}</td>
+    <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
+    <td>${renderPositionBadge(r.positions)}</td>
+    <td>${r.potg}</td>
+    <td>${r.potw}</td>
+    <td>${fmtNum(r.best)}</td>
+  </tr>`).join('');
+}
+
+function renderPotgLog(year){
+  const body = document.getElementById('potg-log-body');
+  if(!body) return;
+  const log = computePotgData(year).sort((a,b) => b.week-a.week);
+  if(!log.length){ body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-faint);padding:24px;">No data for ${seasonLabel(year)}.</td></tr>`; return; }
+  body.innerHTML = log.map(e => `<tr>
+    <td>${seasonLabel(e.year)}</td>
+    <td>Wk ${e.week}</td>
+    <td><span class="player-link" onclick="openPlayerModal('${e.pid}');return false;">${(DB.playerMeta[e.pid]||{}).name||e.pid}</span></td>
+    <td style="color:var(--text-dim);font-size:12px;">${(getManager(e.managerKey)||{}).name||e.managerKey||'—'}</td>
+    <td style="color:var(--gold);">${fmtNum(e.pts)}</td>
+    <td>${e.type}</td>
+  </tr>`).join('');
 }
 
 function renderSearch(){
@@ -2788,6 +3439,75 @@ function runPlayerSearch(query){
 }
 
 /* ============================================================
+   PLAYER ACQUISITION / AWARDS HELPERS
+   Used by the player card. Adapted to basketball's data shapes and
+   reduced awards profile (no MVP, Docile Cup MVP, or Pro Bowl —
+   just championships, All-Docile tiers, All-Rookie, and POTG/POTW).
+   ============================================================ */
+function getPlayerAcquisition(pid){
+  for(const [yr, picks] of Object.entries(DB.draftPicks)){
+    const p = (picks||[]).find(pk => String(pk.player_id) === String(pid));
+    if(p){
+      const season = DB.seasons[yr];
+      const mgrKey = season ? season.rosterIdToManagerKey[p.roster_id] : null;
+      const mgrName = (getManager(mgrKey)||{}).name || mgrKey || '?';
+      return {type:'Draft', label:`${seasonLabel(Number(yr))} Draft \u00b7 Rd ${p.round}, Pick ${p.pick_no} \u00b7 ${mgrName}`};
+    }
+  }
+  const su = (DB.startupDraftPicks || []).find(pk => String(pk.player_id) === String(pid));
+  if(su){
+    const season = DB.seasons[FIRST_SEASON];
+    const mgrKey = season ? season.rosterIdToManagerKey[su.roster_id] : null;
+    const mgrName = (getManager(mgrKey)||{}).name || mgrKey || '?';
+    return {type:'Startup', label:`${seasonLabel(FIRST_SEASON)} Startup Draft \u00b7 Rd ${su.round}, Pick ${su.pick_no} \u00b7 ${mgrName}`};
+  }
+  const hasStarts = DB.allStarters.some(s => String(s.pid) === String(pid));
+  if(hasStarts) return {type:'FA', label:'FA (free agent) \u2014 not drafted'};
+  return null;
+}
+
+function computePlayerAwards(pid){
+  const awards = [];
+
+  const champYears = [];
+  Object.entries(FINAL_STANDINGS).forEach(([yr, f]) => {
+    const year = Number(yr);
+    const season = DB.seasons[year];
+    if(!season) return;
+    const champTeam = (season.teams||[]).find(t => t.managerKey === f.champion);
+    if(!champTeam) return;
+    const started = DB.allStarters.some(s => s.pid===pid && s.year===year && s.teamRosterId===champTeam.rosterId);
+    if(started) champYears.push(seasonLabel(year));
+  });
+  if(champYears.length) awards.push({icon:'ti-trophy', line:`Docile Champion (${champYears.join(', ')})`});
+
+  const tierLabel = {1:'1st Team All-Docile', 2:'2nd Team All-Docile', 3:'3rd Team All-Docile'};
+  [1,2,3].forEach(tier => {
+    const yrs = [];
+    Object.entries(DB.awards.allDocile).forEach(([yr, teams]) => {
+      const roster = (teams && teams[tier]) || [];
+      if(roster.some(r => r.pid === pid)) yrs.push(seasonLabel(Number(yr)));
+    });
+    if(yrs.length) awards.push({icon:'ti-medal', line:`${tierLabel[tier]} (${yrs.join(', ')})`});
+  });
+
+  const rookieYrs = [];
+  Object.entries(DB.awards.allRookie).forEach(([yr, teams]) => {
+    const roster = (teams && teams[1]) || [];
+    if(roster.some(r => r.pid === pid)) rookieYrs.push(seasonLabel(Number(yr)));
+  });
+  if(rookieYrs.length) awards.push({icon:'ti-star', line:`All-Rookie Team (${rookieYrs.join(', ')})`});
+
+  const allLog = computePotgData('all');
+  const potgCount = allLog.filter(e => e.pid === pid).length;
+  const potwCount = allLog.filter(e => e.pid === pid && e.type === 'POTW').length;
+  if(potwCount) awards.push({icon:'ti-star', line:`Player of the Week (${potwCount})`});
+  if(potgCount) awards.push({icon:'ti-flame', line:`Player of the Game (${potgCount})`});
+
+  return awards;
+}
+
+/* ============================================================
    PLAYER MODAL
    ============================================================ */
 function openPlayerModal(pid){
@@ -2795,15 +3515,125 @@ function openPlayerModal(pid){
   if(!meta) return;
   const overlay = document.getElementById('modal-overlay');
   const content = document.getElementById('modal-content');
+
+  const all = DB.allStarters.filter(s => s.pid === pid);
+  const total = all.reduce((a,b) => a+(b.points||0), 0);
+  const starts = all.length;
+  const avg = starts ? total/starts : 0;
+  const best = all.reduce((a,b) => Math.max(a, b.points||0), 0);
+
+  const positions = getPlayerPositions(pid, CURRENT_SEASON);
+  const primaryPos = positions[0] || null;
+
+  const careerTotals = {};
+  DB.allStarters.forEach(s => { careerTotals[s.pid] = (careerTotals[s.pid]||0) + (s.points||0); });
+  const overallArr = Object.entries(careerTotals).sort((a,b) => b[1]-a[1]);
+  const overallRk = overallArr.findIndex(([id]) => id === pid) + 1;
+
+  let posRk = 0;
+  if(primaryPos){
+    const posArr = Object.entries(careerTotals)
+      .filter(([id]) => getPlayerPositions(id, CURRENT_SEASON).includes(primaryPos))
+      .sort((a,b) => b[1]-a[1]);
+    posRk = posArr.findIndex(([id]) => id === pid) + 1;
+  }
+
+  const bySeason = {};
+  all.forEach(s => {
+    if(!bySeason[s.year]) bySeason[s.year] = {pts:0, starts:0, managers:new Set()};
+    bySeason[s.year].pts += (s.points||0);
+    bySeason[s.year].starts++;
+    bySeason[s.year].managers.add((getManager(s.managerKey)||{}).name || s.managerKey || s.teamName || '?');
+  });
+
+  const awards = computePlayerAwards(pid);
+  const acq = getPlayerAcquisition(pid);
+  const trades = DB.transactions.filter(t => Object.keys(t.adds||{}).includes(pid)).sort((a,b) => b.year-a.year || b.week-a.week);
+
   content.innerHTML = `
-    <h2>${meta.name}</h2>
-    <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:14px;">${meta.teamAbbr||'Free Agent'}</div>
-    <div style="margin-bottom:16px;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;">Eligibility by Season</div>
-      ${renderEligibilityTimeline(pid)}
+    <h2 style="margin-bottom:2px;text-transform:uppercase;">${meta.name}</h2>
+    <div style="color:var(--accent);font-size:12.5px;font-weight:600;margin-bottom:16px;">${primaryPos||'—'} \u00b7 ${meta.teamAbbr||'FA'}</div>
+
+    <div style="font-size:11px;color:var(--text-faint);font-family:var(--font-mono);margin-bottom:16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+      <span>Sleeper ID: <span style="color:var(--text-dim);">${pid}</span></span>
+      <button onclick="navigator.clipboard.writeText('${pid}').then(()=>{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)})"
+        style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-faint);font-size:10px;padding:2px 7px;cursor:pointer;">Copy</button>
     </div>
-    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;">Acquisition / Awards / Trade History</div>
-    <div class="empty-state" style="padding:20px;"><i class="ti ti-clock"></i>Wire in draft-acquisition lookup, POTG/POTW honors, and trade history for this player.</div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px;">
+      <div class="card" style="padding:10px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">Total Pts</div>
+        <div style="font-size:19px;font-weight:700;color:var(--accent);">${fmtNum(total,0)}</div>
+      </div>
+      <div class="card" style="padding:10px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">Starts</div>
+        <div style="font-size:19px;font-weight:700;color:var(--accent);">${starts}</div>
+      </div>
+      <div class="card" style="padding:10px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">Avg/Start</div>
+        <div style="font-size:19px;font-weight:700;color:var(--accent);">${fmtNum(avg)}</div>
+      </div>
+      <div class="card" style="padding:10px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">Best Game</div>
+        <div style="font-size:19px;font-weight:700;color:var(--accent);">${fmtNum(best)}</div>
+      </div>
+      <div class="card" style="padding:10px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">${primaryPos||'Pos'} Rank</div>
+        <div style="font-size:19px;font-weight:700;color:var(--accent);">${posRk?'#'+posRk:'—'}</div>
+      </div>
+      <div class="card" style="padding:10px;text-align:center;">
+        <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">Overall Rank</div>
+        <div style="font-size:19px;font-weight:700;color:var(--accent);">${overallRk?'#'+overallRk:'—'}</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px;">
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Notes</div>
+      <div style="font-style:italic;color:var(--text-faint);font-size:12.5px;">No notes yet.</div>
+    </div>
+
+    ${acq ? `<div class="card" style="margin-bottom:12px;">
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Acquired via</div>
+      <div style="font-size:13px;font-weight:600;">${acq.label}</div>
+    </div>` : ''}
+
+    ${awards.length ? `<div style="margin-bottom:14px;">
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">League Awards &amp; Honors</div>
+      ${awards.map(a => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;"><i class="ti ${a.icon}" style="color:var(--gold);"></i>${a.line}</div>`).join('')}
+    </div>` : ''}
+
+    ${trades.length ? `<div style="margin-bottom:14px;">
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Trade History</div>
+      ${trades.map(t => {
+        const season = DB.seasons[t.year];
+        const destRid = t.adds[pid];
+        const [r1, r2] = t.roster_ids || [0,0];
+        const srcRid = destRid === r1 ? r2 : r1;
+        const destMgr = season ? season.rosterIdToManagerKey[destRid] : null;
+        const srcMgr = season ? season.rosterIdToManagerKey[srcRid] : null;
+        return `<div style="background:var(--bg-hover);border-radius:var(--radius-sm);padding:6px 10px;font-size:12px;margin-bottom:4px;">
+          <span style="color:var(--text-faint);font-family:var(--font-mono);font-size:10.5px;">${seasonLabel(t.year)} Wk ${t.week}</span>
+          <span style="margin:0 6px;color:var(--text-faint);">\u00b7</span>
+          <span>${(getManager(srcMgr)||{}).name||srcMgr||'?'}</span>
+          <span style="margin:0 5px;color:var(--accent);">\u2192</span>
+          <strong>${(getManager(destMgr)||{}).name||destMgr||'?'}</strong>
+        </div>`;
+      }).join('')}
+    </div>` : ''}
+
+    <div>
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Season Breakdown</div>
+      <table class="data-table">
+        <thead><tr><th>Season</th><th>Starts</th><th>Total</th><th>Avg</th><th>Manager(s)</th></tr></thead>
+        <tbody>${Object.entries(bySeason).sort((a,b) => b[0]-a[0]).map(([yr,d]) => `<tr>
+          <td>${seasonLabel(Number(yr))}</td>
+          <td>${d.starts}</td>
+          <td>${fmtNum(d.pts)}</td>
+          <td>${fmtNum(d.pts/d.starts)}</td>
+          <td style="font-size:11.5px;color:var(--text-dim);">${[...d.managers].join(', ')}</td>
+        </tr>`).join('')}</tbody>
+      </table>
+    </div>
   `;
   overlay.classList.add('active');
 }
