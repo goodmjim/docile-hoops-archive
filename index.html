@@ -510,7 +510,7 @@ const MANAGERS = {
   bukkaabh:      {name:'Abhi',    years:[2020,2021,2022,2023,2024,2025,2026]},
   JohnCarey:     {name:'John',    years:[2020,2021,2022,2023,2024,2025,2026]},
   DHalp:         {name:'Sting',   years:[2020,2021,2022,2023,2024,2025,2026]},
-  turkmommy:     {name:'Jon',     years:[2020,2021,2022]},
+  turkmommy:     {name:'Jon',     years:[2020,2021]},
   tlynn99:       {name:'Tyler',   years:[2022,2023,2024,2025,2026]},
   lanceesposito: {name:'Lance',   years:[2020,2021,2022]},
   sdenniso:      {name:'Stanley', years:[2023,2024]},
@@ -553,14 +553,16 @@ const TEAM_NAMES = {
   turkmommy:     [{name:'Team turkmommy', years:[2020,2021,2022]}]
 };
 
-// Only trophy currently tracked. Playoff results otherwise excluded from all player stat tracking.
+// Champion kept for backward compatibility — always equals order[0]. `order` is the
+// full 1-12 order of finish (accounts for playoffs), used by My Timeline's Finish column,
+// the Playoffs page, and anywhere season-final placement matters beyond just who won it all.
 const FINAL_STANDINGS = {
-  2020:{champion:'DHalp'},
-  2021:{champion:'DHalp'},
-  2022:{champion:'Goodmjim'},
-  2023:{champion:'Goodmjim'},
-  2024:{champion:'Goodmjim'},
-  2025:{champion:'Goodmjim'}
+  2020:{champion:'DHalp', order:['DHalp','JohnCarey','lanceesposito','karpmcol','bukkaabh','Goodmjim','boonefisher','CarlCanary','amol97','KennethGoulet','kellykyl','turkmommy']},
+  2021:{champion:'DHalp', order:['DHalp','kellykyl','Goodmjim','CarlCanary','karpmcol','JohnCarey','boonefisher','bukkaabh','amol97','lanceesposito','KennethGoulet','turkmommy']},
+  2022:{champion:'Goodmjim', order:['Goodmjim','CarlCanary','DHalp','kellykyl','bukkaabh','JohnCarey','karpmcol','boonefisher','amol97','KennethGoulet','lanceesposito','tlynn99']},
+  2023:{champion:'Goodmjim', order:['Goodmjim','DHalp','bukkaabh','JohnCarey','CarlCanary','boonefisher','kellykyl','amol97','karpmcol','tlynn99','KennethGoulet','sdenniso']},
+  2024:{champion:'Goodmjim', order:['Goodmjim','boonefisher','CarlCanary','bukkaabh','JohnCarey','KennethGoulet','karpmcol','amol97','DHalp','tlynn99','kellykyl','sdenniso']},
+  2025:{champion:'Goodmjim', order:['Goodmjim','boonefisher','KennethGoulet','amol97','CarlCanary','bukkaabh','JohnCarey','karpmcol','tlynn99','Dfletch22','DHalp','kellykyl']}
 };
 
 /* ============================================================
@@ -1089,7 +1091,7 @@ const NAV_GROUPS = [
       {key:'awards',        label:'Awards',          icon:'ti-medal',          desc:'Season honor teams built from starting-lineup scoring only.', ready:true},
       {key:'potg',          label:'POTG',            icon:'ti-flame',          desc:'Player of the Game and Player of the Week, regular season only.', ready:true},
       {key:'projections',   label:'Projections',     icon:'ti-target',         desc:'Weekly projected points, where Sleeper provides them.', ready:true},
-      {key:'playoffs',      label:'Playoffs',        icon:'ti-tournament',     desc:'Every playoff matchup by year, and all-time playoff standings.', ready:false},
+      {key:'playoffs',      label:'Playoffs',        icon:'ti-tournament',     desc:'Every playoff matchup by year, and all-time playoff standings.', ready:true},
       {key:'matchups',      label:'Matchups',        icon:'ti-calendar-event', desc:'Every matchup in Fellowship history, regular season and playoffs.', ready:true}
     ]
   }
@@ -1188,6 +1190,29 @@ async function loadTransactions(year){
   DB.transactions.push(...trades);
 }
 
+// Fetches playoff-week matchups (weeks from playoffWeekStart onward) into a separate
+// store from the regular-season-only matchupsByWeek — this data feeds the Playoffs page
+// only, and deliberately never touches DB.allStarters/player-stat tracking. We don't know
+// the exact number of playoff weeks up front, so we probe a generous range and keep only
+// the weeks that actually returned real matchup data.
+async function loadPlayoffData(year){
+  const season = DB.seasons[year];
+  if(!season || !season.playoffWeekStart) return;
+  const leagueId = LEAGUE_IDS[year];
+  const startWeek = season.playoffWeekStart;
+  const probeWeeks = Array.from({length:6}, (_,i) => startWeek + i); // generous upper bound
+
+  const results = await Promise.all(probeWeeks.map(w =>
+    apiFetch(`/league/${leagueId}/matchups/${w}`).then(mu => ({w, mu})).catch(() => ({w, mu:[]}))
+  ));
+
+  DB.playoffMatchupsByWeek[year] = {};
+  results.forEach(({w, mu}) => {
+    const hasRealGames = mu.some(m => (m.starters||[]).some(pid => pid && pid !== '0'));
+    if(hasRealGames) DB.playoffMatchupsByWeek[year][w] = mu;
+  });
+}
+
 async function loadSeasonScoring(year){
   const season = DB.seasons[year];
   if(!season) return;
@@ -1256,14 +1281,18 @@ async function loadSeasonScoring(year){
 // Generic scoring calculator — iterates every key in the league's scoring_settings
 // and multiplies by the matching stat value. Sleeper uses identical key names across
 // sports, so this needs no NBA-specific translation; ported directly from football.
-// Computes a matchup entry's team total by SUMMING each starter's players_points,
-// rather than trusting Sleeper's cached top-level entry.points field. Sleeper
-// occasionally applies retroactive stat corrections (official NBA box score fixes)
-// that update individual player stats without necessarily refreshing that cached
-// total — summing fresh from players_points matches what the live Sleeper app
-// currently shows, since the app recomputes from current player stats too.
-// Falls back to entry.points only if players_points is entirely missing.
+// Computes a matchup entry's team total, in priority order:
+//   1. entry.custom_points — a manual commissioner score override. Sleeper supports this
+//      for correcting a team's total independent of individual player stats (e.g. fixing
+//      a known scoring bug without touching player-level numbers). When set, it's a
+//      deliberate human decision and should always win.
+//   2. SUM of players_points for that entry's starters — more reliable than the cached
+//      entry.points field, since Sleeper occasionally applies retroactive stat corrections
+//      (official NBA box score fixes) to individual players without necessarily refreshing
+//      that cached total.
+//   3. entry.points — last-resort fallback if players_points is entirely missing.
 function getTeamComputedTotal(entry){
+  if(entry.custom_points !== null && entry.custom_points !== undefined) return entry.custom_points;
   const ppts = entry.players_points;
   if(!ppts) return entry.points || 0;
   const starters = entry.starters || [];
@@ -1392,6 +1421,9 @@ const DB = {
   draftPicks: {},                // DB.draftPicks[year] = [ picks... ]
   startupDraftPicks: [],         // 2020 startup draft picks
   transactions: [],              // completed trades, flat array: {type:'trade', roster_ids, adds, drops, draft_picks, week, year, ...}
+  playoffMatchupsByWeek: {},     // DB.playoffMatchupsByWeek[year][week] = raw Sleeper matchup entries — separate from
+                                  // DB.allStarters/matchupsByWeek (regular season only), since playoff results are
+                                  // team/bracket-level info and don't feed player-stat tracking (POTG/All-Docile/etc).
   awards: {
     // POTG/POTW are NOT cached here — computed on demand via computePotgData(yearFilter),
     // same as the football archive's computePotgData(). Only the All-Docile/All-Rookie
@@ -1491,6 +1523,7 @@ const RENDER_FNS = {
   awards: renderAwardsPanel,
   potg: renderPotgPanel,
   projections: renderProjectionsPanel,
+  playoffs: renderPlayoffsPanel,
   matchups: renderMatchupsPanel,
   search: renderSearch
 };
@@ -2440,6 +2473,13 @@ function renderMyTimelineFor(managerKey){
               record = `${team.wins}\u2013${team.losses}`;
               pf = fmtNum(team.pf,0);
               pa = fmtNum(team.pa,0);
+            }
+            // Prefer the real (playoff-inclusive) order of finish when we have it —
+            // more accurate than reconstructing rank from regular-season games alone.
+            if(FINAL_STANDINGS[y] && FINAL_STANDINGS[y].order){
+              const pos = FINAL_STANDINGS[y].order.indexOf(managerKey);
+              if(pos !== -1) finish = `#${pos+1} of ${FINAL_STANDINGS[y].order.length}`;
+            } else if(team){
               const ranked = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
               const rank = ranked.findIndex(t => t.managerKey === managerKey) + 1;
               if(rank > 0) finish = `#${rank} of ${ranked.length}`;
@@ -2672,6 +2712,33 @@ function renderPlayersTableBody(){
    Reduced awards profile per league rules — champions only, no
    runner-up/loser trophies exist for basketball.
    ============================================================ */
+// Finds the championship game for a season by matching a playoff matchup's two
+// participants against FINAL_STANDINGS.order[0]/[1] — same identification approach
+// as the Playoffs page, reused here for League Timeline's finals score.
+function getChampionshipGame(year){
+  const season = DB.seasons[year];
+  const playoffWeeks = DB.playoffMatchupsByWeek[year];
+  const standing = FINAL_STANDINGS[year];
+  if(!season || !playoffWeeks || !standing || !standing.order) return null;
+  const weeks = Object.keys(playoffWeeks).map(Number).sort((a,b)=>a-b);
+  if(!weeks.length) return null;
+  const mus = playoffWeeks[weeks[weeks.length-1]];
+  const byId = {};
+  mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
+  const champKey = standing.order[0], runnerUpKey = standing.order[1];
+  for(const pair of Object.values(byId)){
+    if(pair.length < 2) continue;
+    const [a,b] = pair;
+    const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
+    if((ka===champKey && kb===runnerUpKey) || (kb===champKey && ka===runnerUpKey)){
+      const champEntry = ka===champKey ? a : b;
+      const runnerUpEntry = ka===champKey ? b : a;
+      return {champKey, runnerUpKey, champPts: getTeamComputedTotal(champEntry), runnerUpPts: getTeamComputedTotal(runnerUpEntry)};
+    }
+  }
+  return null;
+}
+
 function renderLeagueTimeline(){
   const el = document.getElementById('leaguetimeline-body');
   const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
@@ -2679,6 +2746,7 @@ function renderLeagueTimeline(){
     ${years.map(y => {
       const champ = FINAL_STANDINGS[y];
       const hasData = !!DB.seasons[y];
+      const game = champ ? getChampionshipGame(y) : null;
       return `<div class="timeline-item">
         <div class="timeline-dot ${champ?'champ':''}"></div>
         <div class="card">
@@ -2686,7 +2754,10 @@ function renderLeagueTimeline(){
             <div style="font-family:var(--font-display);font-weight:700;font-size:17px;">${seasonLabel(y)}</div>
             ${champ ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>${getManagerDisplay(champ.champion, y)}</span>` : `<span style="color:var(--text-faint);font-size:12.5px;">${hasData ? 'Season in progress' : 'Not yet played'}</span>`}
           </div>
-          ${champ ? `<div style="color:var(--text-faint);font-size:11.5px;margin-top:8px;"><i class="ti ti-clock" style="font-size:11px;"></i> Finals matchup \u2014 coming soon</div>` : ''}
+          ${champ ? (game
+            ? `<div style="color:var(--text-dim);font-size:12px;margin-top:8px;">Finals: <strong style="color:var(--good);">${fmtNum(game.champPts)}</strong> \u2013 ${fmtNum(game.runnerUpPts)} vs ${(getManager(game.runnerUpKey)||{}).name||game.runnerUpKey}</div>`
+            : `<div style="color:var(--text-faint);font-size:11.5px;margin-top:8px;"><i class="ti ti-clock" style="font-size:11px;"></i> Finals matchup \u2014 coming soon</div>`
+          ) : ''}
         </div>
       </div>`;
     }).join('')}
@@ -2857,6 +2928,130 @@ function renderLeagueTradesList(){
    Full repository of every regular-season matchup, filterable by
    season and manager. Capped at 150 cards for render performance.
    ============================================================ */
+/* ============================================================
+   PLAYOFFS
+   Built from DB.playoffMatchupsByWeek (already loaded, separate from the
+   regular-season-only DB.allStarters pipeline) plus FINAL_STANDINGS.order.
+   Championship/3rd-place games are identified by matching each matchup's two
+   participants against the hand-verified final order — more reliable than
+   parsing Sleeper's bracket-advancement API, and it doubles as a correctness
+   check: if the data disagreed, the labels simply wouldn't line up.
+   ============================================================ */
+function computeAllTimePlayoffStandings(){
+  const agg = {};
+  Object.keys(MANAGERS).forEach(k => { agg[k] = {championships:0, runnerUps:0, appearances:0}; });
+
+  Object.entries(FINAL_STANDINGS).forEach(([yr, f]) => {
+    const year = Number(yr);
+    if(!f.order) return;
+    const season = DB.seasons[year];
+    const playoffWeeks = DB.playoffMatchupsByWeek[year] || {};
+    const madePlayoffs = new Set();
+    Object.values(playoffWeeks).forEach(mus => {
+      mus.forEach(m => {
+        const mk = season ? season.rosterIdToManagerKey[m.roster_id] : null;
+        if(mk) madePlayoffs.add(mk);
+      });
+    });
+    madePlayoffs.forEach(k => { if(agg[k]) agg[k].appearances++; });
+    if(f.order[0] && agg[f.order[0]]) agg[f.order[0]].championships++;
+    if(f.order[1] && agg[f.order[1]]) agg[f.order[1]].runnerUps++;
+  });
+
+  return Object.entries(agg).map(([k,d]) => ({k, ...d})).filter(d => d.appearances>0 || d.championships>0);
+}
+
+function renderPlayoffsPanel(){
+  const el = document.getElementById('playoffs-body');
+  const standings = computeAllTimePlayoffStandings()
+    .sort((a,b) => b.championships-a.championships || b.runnerUps-a.runnerUps || b.appearances-a.appearances);
+
+  el.innerHTML = `
+    <div class="card" style="margin-bottom:24px;">
+      <h3>All-Time Playoff Standings</h3>
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr><th>Manager</th><th>Championships</th><th>Runner-Up</th><th>Playoff Appearances</th></tr></thead>
+          <tbody>${standings.map(r => `<tr>
+            <td>${(getManager(r.k)||{}).name||r.k}</td>
+            <td style="font-family:var(--font-mono);color:var(--gold);">${r.championships || '—'}</td>
+            <td style="font-family:var(--font-mono);">${r.runnerUps || '—'}</td>
+            <td style="font-family:var(--font-mono);">${r.appearances}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>
+    <div id="playoffs-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
+    <div id="playoffs-detail"></div>
+  `;
+  const defaultYear = DB.selectedSeason || (CURRENT_SEASON - 1);
+  renderYearChips('playoffs-yr-chips', (y)=>{ renderPlayoffsFor(y); }, defaultYear);
+  renderPlayoffsFor(defaultYear);
+}
+
+function renderPlayoffsFor(year){
+  const el = document.getElementById('playoffs-detail');
+  const season = DB.seasons[year];
+  const playoffWeeks = DB.playoffMatchupsByWeek[year];
+  if(!season || !playoffWeeks || !Object.keys(playoffWeeks).length){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-tournament"></i>No playoff data loaded for ${seasonLabel(year)}.</div>`;
+    return;
+  }
+  const weeks = Object.keys(playoffWeeks).map(Number).sort((a,b)=>a-b);
+  const standing = FINAL_STANDINGS[year];
+  const orderPos = {};
+  if(standing && standing.order) standing.order.forEach((k,i) => { orderPos[k] = i+1; });
+
+  const roundLabel = (idx) => {
+    const fromEnd = weeks.length - idx - 1;
+    if(fromEnd === 0) return 'Championship Week';
+    if(fromEnd === 1) return 'Semifinals';
+    if(fromEnd === 2) return 'Quarterfinals';
+    return `Round ${idx+1}`;
+  };
+
+  let html = '';
+  weeks.forEach((w, idx) => {
+    const mus = playoffWeeks[w];
+    const byId = {};
+    mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
+    const pairs = Object.values(byId).filter(p => p.length >= 2);
+    if(!pairs.length) return;
+
+    html += `<h3 style="margin:20px 0 12px;">${roundLabel(idx)} <span style="color:var(--text-faint);font-weight:400;font-size:12px;">(Week ${w})</span></h3><div class="card-grid">`;
+    pairs.forEach(pair => {
+      const [a,b] = pair;
+      const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
+      const pa = getTeamComputedTotal(a), pb = getTeamComputedTotal(b);
+      const aWon = pa >= pb;
+      const posA = orderPos[ka], posB = orderPos[kb];
+      let gameLabel = '';
+      if(posA && posB){
+        const lo = Math.min(posA,posB), hi = Math.max(posA,posB);
+        if(lo===1 && hi===2) gameLabel = '\u{1F3C6} Championship';
+        else if(lo===3 && hi===4) gameLabel = '3rd Place Game';
+      }
+      html += `<div class="card">
+        ${gameLabel ? `<div style="color:var(--gold);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">${gameLabel}</div>` : ''}
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <div style="${aWon?'font-weight:700;':''}">
+            <div style="font-size:12.5px;">${(getManager(ka)||{}).name||ka}</div>
+            <div style="font-family:var(--font-mono);font-size:17px;">${fmtNum(pa)}</div>
+          </div>
+          <div style="color:var(--text-faint);font-size:11px;">vs</div>
+          <div style="text-align:right;${!aWon?'font-weight:700;':''}">
+            <div style="font-size:12.5px;">${(getManager(kb)||{}).name||kb}</div>
+            <div style="font-family:var(--font-mono);font-size:17px;">${fmtNum(pb)}</div>
+          </div>
+        </div>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  el.innerHTML = html || `<div class="empty-state"><i class="ti ti-tournament"></i>No playoff matchups found for ${seasonLabel(year)}.</div>`;
+}
+
 function renderMatchupsPanel(){
   const el = document.getElementById('matchups-body');
   const years = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>b-a);
@@ -4000,6 +4195,7 @@ async function loadAllData(onProgress = () => {}){
     onProgress(55 + Math.round((i/years.length)*40), `Loading ${seasonLabel(y)} scoring… (${i+1}/${years.length})`);
     await loadSeasonScoring(y);
     await loadTransactions(y);
+    await loadPlayoffData(y);
     buildHonorsForYear(y);
   }
   onProgress(100, '');
