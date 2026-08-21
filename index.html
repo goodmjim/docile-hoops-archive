@@ -1069,7 +1069,7 @@ const NAV_GROUPS = [
     pages:[
       {key:'myscoring',  label:'My Scoring',       icon:'ti-target-arrow',     desc:'Every player you\u2019ve started, ranked by points, starts, average, or best game.', ready:true},
       {key:'mytimeline', label:'My Timeline',      icon:'ti-history',          desc:'Year-by-year record, finish, PF/PA, team name, and trophy history.', ready:true},
-      {key:'myh2h',      label:'My H2H',           icon:'ti-versus',           desc:'Your all-time record against every other manager.', ready:true},
+      {key:'myh2h',      label:'My H2H',           icon:'ti-swords',            desc:'Your all-time record against every other manager.', ready:true},
       {key:'mydraft',    label:'My Draft',         icon:'ti-clipboard-list',   desc:'Every rookie pick you\u2019ve made, with points scored for your team.', ready:true},
       {key:'mytrades',   label:'My Trades',        icon:'ti-arrows-exchange',  desc:'All trades involving your roster across loaded seasons.', ready:true},
       {key:'mylineup',   label:'All-Time Lineup',  icon:'ti-crown',            desc:'Your best-ever starting lineup across every season you\u2019ve played.', ready:true},
@@ -1080,10 +1080,10 @@ const NAV_GROUPS = [
     key:'league', label:'League', icon:'ti-trophy',
     pages:[
       {key:'playerscoring', label:'Player Scoring', icon:'ti-chart-bar',       desc:'Points scored while in a starting lineup slot only \u2014 bench points never count. Regular season only.', ready:true},
-      {key:'playergraphs',  label:'Player Graphs',  icon:'ti-chart-scatter',   desc:'Plot any two player stats against each other across the league.', ready:true},
+      {key:'playergraphs',  label:'Player Graphs',  icon:'ti-chart-dots-3',    desc:'Plot any two player stats against each other across the league.', ready:true},
       {key:'leaguetimeline',label:'Timeline',        icon:'ti-timeline',       desc:'The Fellowship\u2019s history, season by season.', ready:true},
       {key:'standings',     label:'Standings',       icon:'ti-list-numbers',   desc:'Full league standings, records, and title counts.', ready:true},
-      {key:'leagueh2h',     label:'H2H',             icon:'ti-versus',         desc:'Head-to-head records between every pair of managers.', ready:true},
+      {key:'leagueh2h',     label:'H2H',             icon:'ti-swords',           desc:'Head-to-head records between every pair of managers.', ready:true},
       {key:'draft',         label:'Draft',           icon:'ti-clipboard-list', desc:'Every pick, every season, including the 2020 startup draft.', ready:true},
       {key:'trades',        label:'Trades',          icon:'ti-arrows-exchange',desc:'Every trade in Fellowship history.', ready:true},
       {key:'awards',        label:'Awards',          icon:'ti-medal',          desc:'Season honor teams built from starting-lineup scoring only.', ready:true},
@@ -2071,7 +2071,7 @@ function renderMyH2HPanel(){
   const sf = {w:(a,b)=>(a.w-b.w)*dir, l:(a,b)=>(a.l-b.l)*dir, pct:(a,b)=>(a.pct-b.pct)*dir, games:(a,b)=>(a.games-b.games)*dir};
   rows.sort(sf[myH2HSort.col] || sf.w);
 
-  if(!rows.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-versus"></i>No head-to-head games found yet.</div>`; return; }
+  if(!rows.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-swords"></i>No head-to-head games found yet.</div>`; return; }
 
   el.innerHTML = `<table class="data-table">
     <thead><tr>
@@ -2722,7 +2722,7 @@ function renderLeagueH2HResult(){
   const t1 = document.getElementById('h2h-t1').value;
   const t2 = document.getElementById('h2h-t2').value;
   const el = document.getElementById('h2h-result');
-  if(t1 === t2){ el.innerHTML = `<div class="empty-state"><i class="ti ti-versus"></i>Select two different managers.</div>`; return; }
+  if(t1 === t2){ el.innerHTML = `<div class="empty-state"><i class="ti ti-swords"></i>Select two different managers.</div>`; return; }
 
   const {w1: t1w, w2: t2w, games} = computeAllTimeH2H(t1, t2);
   const t1Name = (getManager(t1)||{}).name, t2Name = (getManager(t2)||{}).name;
@@ -2750,7 +2750,7 @@ function renderLeagueH2HResult(){
         <td style="font-family:var(--font-mono);${g.pt1>=g.pt2?'font-weight:700;color:var(--good);':''}">${fmtNum(g.pt1)}</td>
         <td style="font-family:var(--font-mono);${g.pt2>g.pt1?'font-weight:700;color:var(--good);':''}">${fmtNum(g.pt2)}</td>
       </tr>`).join('')}</tbody>
-    </table>` : `<div class="empty-state"><i class="ti ti-versus"></i>No head-to-head games found.</div>`}
+    </table>` : `<div class="empty-state"><i class="ti ti-swords"></i>No head-to-head games found.</div>`}
   `;
 }
 
@@ -3735,7 +3735,7 @@ function getPlayerAcquisition(pid){
 function computePlayerAwards(pid){
   const awards = [];
 
-  const champYears = [];
+  let champCount = 0;
   Object.entries(FINAL_STANDINGS).forEach(([yr, f]) => {
     const year = Number(yr);
     const season = DB.seasons[year];
@@ -3743,32 +3743,34 @@ function computePlayerAwards(pid){
     const champTeam = (season.teams||[]).find(t => t.managerKey === f.champion);
     if(!champTeam) return;
     const started = DB.allStarters.some(s => s.pid===pid && s.year===year && s.teamRosterId===champTeam.rosterId);
-    if(started) champYears.push(seasonLabel(year));
+    if(started) champCount++;
   });
-  if(champYears.length) awards.push({icon:'ti-trophy', line:`Docile Champion (${champYears.join(', ')})`});
+  if(champCount) awards.push({emoji: '\u{1F3C6}'.repeat(champCount), line:`Docile Champion (${champCount})`}); // 🏆
 
-  const tierLabel = {1:'1st Team All-Docile', 2:'2nd Team All-Docile', 3:'3rd Team All-Docile'};
+  // Repeated-emoji tallies: one emoji per occurrence, plus the existing (#) count.
+  const tierEmoji = {1:'\u{1F947}', 2:'\u{1F948}', 3:'\u{1F949}'}; // 🥇🥈🥉
+  const tierLabel = {1:'All-Docile 1st Team', 2:'All-Docile 2nd Team', 3:'All-Docile 3rd Team'};
   [1,2,3].forEach(tier => {
-    const yrs = [];
-    Object.entries(DB.awards.allDocile).forEach(([yr, teams]) => {
+    let count = 0;
+    Object.values(DB.awards.allDocile).forEach(teams => {
       const roster = (teams && teams[tier]) || [];
-      if(roster.some(r => r.pid === pid)) yrs.push(seasonLabel(Number(yr)));
+      if(roster.some(r => r.pid === pid)) count++;
     });
-    if(yrs.length) awards.push({icon:'ti-medal', line:`${tierLabel[tier]} (${yrs.join(', ')})`});
+    if(count) awards.push({emoji: tierEmoji[tier].repeat(count), line:`${tierLabel[tier]} (${count})`});
   });
 
-  const rookieYrs = [];
-  Object.entries(DB.awards.allRookie).forEach(([yr, teams]) => {
+  let rookieCount = 0;
+  Object.values(DB.awards.allRookie).forEach(teams => {
     const roster = (teams && teams[1]) || [];
-    if(roster.some(r => r.pid === pid)) rookieYrs.push(seasonLabel(Number(yr)));
+    if(roster.some(r => r.pid === pid)) rookieCount++;
   });
-  if(rookieYrs.length) awards.push({icon:'ti-star', line:`All-Rookie Team (${rookieYrs.join(', ')})`});
+  if(rookieCount) awards.push({emoji: '\u{1F476}'.repeat(rookieCount), line:`All-Rookie Team (${rookieCount})`}); // 👶
 
   const allLog = computePotgData('all');
   const potgCount = allLog.filter(e => e.pid === pid).length;
   const potwCount = allLog.filter(e => e.pid === pid && e.type === 'POTW').length;
-  if(potwCount) awards.push({icon:'ti-star', line:`Player of the Week (${potwCount})`});
-  if(potgCount) awards.push({icon:'ti-flame', line:`Player of the Game (${potgCount})`});
+  if(potwCount) awards.push({emoji: '\u{1F396}\u{FE0F}'.repeat(potwCount), line:`POTW (${potwCount})`}); // 🎖️
+  if(potgCount) awards.push({emoji: '\u{1F397}\u{FE0F}'.repeat(potgCount), line:`POTG (${potgCount})`}); // 🎗️
 
   return awards;
 }
@@ -3865,7 +3867,10 @@ function openPlayerModal(pid){
 
     ${awards.length ? `<div style="margin-bottom:14px;">
       <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">League Awards &amp; Honors</div>
-      ${awards.map(a => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;"><i class="ti ${a.icon}" style="color:var(--gold);"></i>${a.line}</div>`).join('')}
+      ${awards.map(a => `<div style="padding:5px 0;font-size:13px;line-height:1.7;display:flex;align-items:flex-start;gap:8px;">
+        ${a.icon ? `<i class="ti ${a.icon}" style="color:var(--gold);flex-shrink:0;margin-top:2px;"></i>` : ''}
+        <span>${a.emoji ? `<span style="word-break:break-all;">${a.emoji}</span> ` : ''}${a.line}</span>
+      </div>`).join('')}
     </div>` : ''}
 
     ${trades.length ? `<div style="margin-bottom:14px;">
