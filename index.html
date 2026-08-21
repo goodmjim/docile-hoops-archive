@@ -3735,7 +3735,8 @@ function getPlayerAcquisition(pid){
 function computePlayerAwards(pid){
   const awards = [];
 
-  let champCount = 0;
+  // Championships — 🏆 repeated per title, with the actual years won
+  const champYears = [];
   Object.entries(FINAL_STANDINGS).forEach(([yr, f]) => {
     const year = Number(yr);
     const season = DB.seasons[year];
@@ -3743,34 +3744,38 @@ function computePlayerAwards(pid){
     const champTeam = (season.teams||[]).find(t => t.managerKey === f.champion);
     if(!champTeam) return;
     const started = DB.allStarters.some(s => s.pid===pid && s.year===year && s.teamRosterId===champTeam.rosterId);
-    if(started) champCount++;
+    if(started) champYears.push(seasonLabel(year));
   });
-  if(champCount) awards.push({emoji: '\u{1F3C6}'.repeat(champCount), line:`Docile Champion (${champCount})`}); // 🏆
+  if(champYears.length) awards.push({emoji: '\u{1F3C6}'.repeat(champYears.length), line:`Docile Champion (${champYears.join(', ')})`}); // 🏆
 
-  // Repeated-emoji tallies: one emoji per occurrence, plus the existing (#) count.
+  // All-Docile tiers — medal emoji repeated per occurrence, with the actual years won
   const tierEmoji = {1:'\u{1F947}', 2:'\u{1F948}', 3:'\u{1F949}'}; // 🥇🥈🥉
   const tierLabel = {1:'All-Docile 1st Team', 2:'All-Docile 2nd Team', 3:'All-Docile 3rd Team'};
   [1,2,3].forEach(tier => {
-    let count = 0;
-    Object.values(DB.awards.allDocile).forEach(teams => {
+    const yrs = [];
+    Object.entries(DB.awards.allDocile).forEach(([yr, teams]) => {
       const roster = (teams && teams[tier]) || [];
-      if(roster.some(r => r.pid === pid)) count++;
+      if(roster.some(r => r.pid === pid)) yrs.push(seasonLabel(Number(yr)));
     });
-    if(count) awards.push({emoji: tierEmoji[tier].repeat(count), line:`${tierLabel[tier]} (${count})`});
+    if(yrs.length) awards.push({emoji: tierEmoji[tier].repeat(yrs.length), line:`${tierLabel[tier]} (${yrs.join(', ')})`});
   });
 
-  let rookieCount = 0;
-  Object.values(DB.awards.allRookie).forEach(teams => {
+  // All-Rookie — 👶 repeated per occurrence, with the actual year(s) won
+  const rookieYrs = [];
+  Object.entries(DB.awards.allRookie).forEach(([yr, teams]) => {
     const roster = (teams && teams[1]) || [];
-    if(roster.some(r => r.pid === pid)) rookieCount++;
+    if(roster.some(r => r.pid === pid)) rookieYrs.push(seasonLabel(Number(yr)));
   });
-  if(rookieCount) awards.push({emoji: '\u{1F476}'.repeat(rookieCount), line:`All-Rookie Team (${rookieCount})`}); // 👶
+  if(rookieYrs.length) awards.push({emoji: '\u{1F476}'.repeat(rookieYrs.length), line:`All-Rookie Team (${rookieYrs.join(', ')})`}); // 👶
 
+  // POTW/POTG — single emoji + numeric count only. These are weekly (not seasonal) honors
+  // that can run high (double digits), so a repeated-emoji-per-occurrence treatment or a
+  // full week-by-week list would be excessive here — a count is more readable.
   const allLog = computePotgData('all');
   const potgCount = allLog.filter(e => e.pid === pid).length;
   const potwCount = allLog.filter(e => e.pid === pid && e.type === 'POTW').length;
-  if(potwCount) awards.push({emoji: '\u{1F396}\u{FE0F}'.repeat(potwCount), line:`POTW (${potwCount})`}); // 🎖️
-  if(potgCount) awards.push({emoji: '\u{1F397}\u{FE0F}'.repeat(potgCount), line:`POTG (${potgCount})`}); // 🎗️
+  if(potwCount) awards.push({emoji: '\u{1F396}\u{FE0F}', line:`POTW (${potwCount})`}); // 🎖️
+  if(potgCount) awards.push({emoji: '\u{1F397}\u{FE0F}', line:`POTG (${potgCount})`}); // 🎗️
 
   return awards;
 }
