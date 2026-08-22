@@ -187,6 +187,37 @@ button{font-family:inherit;cursor:pointer;}
 .nav-item:hover{background:var(--bg-hover);color:var(--text);}
 .nav-item.active{background:var(--accent-soft);color:var(--accent);}
 
+/* --- Sidebar snapshot toolbar (desktop only, footer of #sidebar) --- */
+.sb-controls{
+  margin-top:auto;
+  padding:12px 10px;
+  border-top:1px solid var(--border-soft);
+  display:flex;
+  gap:6px;
+  align-items:center;
+}
+.s-sel{
+  flex:1;
+  min-width:0;
+  padding:6px 8px;
+  border-radius:var(--radius-sm);
+  border:1px solid var(--border);
+  background:var(--bg-panel);
+  color:var(--text-dim);
+  font-size:11.5px;
+}
+.sb-btn{
+  flex-shrink:0;
+  width:30px;height:30px;
+  border-radius:var(--radius-sm);
+  border:1px solid var(--border);
+  background:var(--bg-panel);
+  color:var(--text-faint);
+  display:flex;align-items:center;justify-content:center;
+  font-size:14px;
+}
+.sb-btn:hover{color:var(--text);border-color:var(--text-faint);}
+
 /* --- Main content --- */
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
 #topbar{
@@ -410,6 +441,12 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
       <div class="sub">Season Archive</div>
     </div>
     <div id="sidebar-nav"></div>
+    <div class="sb-controls">
+      <select class="s-sel" id="snapshot-scope-sel" title="Snapshot export scope"></select>
+      <button class="sb-btn" onclick="doRefresh()" title="Refresh data"><i class="ti ti-refresh"></i></button>
+      <button class="sb-btn" onclick="exportSnapshot()" title="Export snapshots"><i class="ti ti-download"></i></button>
+      <button class="sb-btn" onclick="goBack()" title="Back to sign-in"><i class="ti ti-arrow-left"></i></button>
+    </div>
   </nav>
 
   <!-- ===================== MAIN ===================== -->
@@ -444,7 +481,9 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
    CONFIG
    ============================================================ */
 const CF_WORKER_URL = 'https://sleeper-proxy.jimmygoodman52.workers.dev';
-const SNAPSHOT_BASE = ''; // e.g. '/snapshots' or full GH Pages path; filled in when snapshots exist
+// ASSUMPTION: matches football's pattern of {github-username}.github.io/{repo}/snapshots.
+// Verify this is actually correct for your GitHub account/repo — update if not.
+const SNAPSHOT_BASE = 'https://goodmjim.github.io/docile-hoops-archive/snapshots';
 // TODO: point this at a second Cloudflare Worker that proxies to the Anthropic API,
 // once set up. Powers the Weekly Recap AI blurb and (eventually) Smart Search.
 const CLAUDE_WORKER_URL = 'https://docile-league-claude.jimmygoodman52.workers.dev';
@@ -957,13 +996,142 @@ async function apiFetch(path){
   return res.json();
 }
 
-async function fetchSnapshot(year){
+/* ============================================================
+   SNAPSHOTS — GitHub-hosted JSON backups of each season, mirroring the
+   football archive's approach. Two purposes:
+   1. Protects against Sleeper data loss/API changes — a snapshot is a frozen
+      copy of a season that loads even if Sleeper's API is ever unavailable
+      or a historical season's data changes/disappears.
+   2. Export -> commit to the repo's /snapshots/ folder -> loadSnapshot()
+      picks it up automatically on every future load as a fallback baseline,
+      applied on top of (or instead of) live data.
+   ============================================================ */
+async function loadSnapshot(year){
   if(!SNAPSHOT_BASE) return null;
   try{
-    const res = await fetch(`${SNAPSHOT_BASE}/${year}.json`);
+    const res = await fetch(`${SNAPSHOT_BASE}/${year}.json`, {cache:'no-cache'});
     if(!res.ok) return null;
-    return res.json();
+    const snap = await res.json();
+    if(snap && snap.version && snap.year === Number(year)) return snap;
+    return null;
   }catch(e){ return null; }
+}
+
+// Merges a snapshot into DB as a fallback baseline. If live Sleeper data for this
+// year already loaded successfully, this only fills in anything missing (deduped by
+// pid+week+rosterId) — matches football's "apply snapshot even on success, to patch
+// any gaps Sleeper's API dropped" approach. If live loading failed entirely for this
+// year, this also reconstructs the season shell (teams/matchups/etc.) from scratch.
+function applySnapshot(snap, year){
+  if(!snap) return;
+
+  if(!DB.seasons[year]){
+    DB.seasons[year] = {
+      league: {name: snap.leagueName, scoring_settings: {}},
+      teams: snap.teams || [],
+      rosterIdToManagerKey: snap.rosterIdToManagerKey || {},
+      userIdToManagerKey: {},
+      playoffWeekStart: snap.playoffWeekStart || null,
+      matchupsByWeek: snap.matchupsByWeek || {}
+    };
+  }
+  if(!DB.playoffMatchupsByWeek[year] || !Object.keys(DB.playoffMatchupsByWeek[year]).length){
+    DB.playoffMatchupsByWeek[year] = snap.playoffMatchupsByWeek || {};
+  }
+  if(!DB.playoffBrackets[year] || !DB.playoffBrackets[year].length){
+    DB.playoffBrackets[year] = snap.playoffBracket || [];
+  }
+
+  const existingKeys = new Set(DB.allStarters.filter(s => s.year===year).map(s => `${s.pid}|${s.week}|${s.teamRosterId}`));
+  let added = 0;
+  (snap.starters || []).forEach(s => {
+    const k = `${s.pid}|${s.week}|${s.teamRosterId}`;
+    if(!existingKeys.has(k)){
+      DB.allStarters.push(s);
+      existingKeys.add(k);
+      added++;
+    }
+  });
+
+  const existingTx = new Set(DB.transactions.map(t => t.transaction_id || `${t.year}|${t.week}`));
+  (snap.trades || []).forEach(t => {
+    const k = t.transaction_id || `${t.year}|${t.week}`;
+    if(!existingTx.has(k)){ DB.transactions.push(t); existingTx.add(k); }
+  });
+
+  if(year === FIRST_SEASON && snap.draftPicks && snap.draftPicks.startup){
+    const existingPids = new Set(DB.startupDraftPicks.map(p => p.player_id));
+    snap.draftPicks.startup.forEach(p => { if(!existingPids.has(p.player_id)) DB.startupDraftPicks.push(p); });
+  }
+  if(snap.draftPicks && snap.draftPicks.rookie){
+    if(!DB.draftPicks[year]) DB.draftPicks[year] = [];
+    const existingPids = new Set(DB.draftPicks[year].map(p => p.player_id));
+    snap.draftPicks.rookie.forEach(p => { if(!existingPids.has(p.player_id)) DB.draftPicks[year].push(p); });
+  }
+
+  if(added > 0) console.log(`[Archive] Snapshot ${year}: restored ${added} starter entries from GitHub backup`);
+}
+
+// Downloads one JSON file per loaded season (or just the selected one, via the
+// sidebar's scope dropdown) — upload these to the repo's /snapshots/ folder to back
+// them up. See the in-app walkthrough for exact GitHub steps.
+function exportSnapshot(){
+  const years = Object.keys(DB.seasons).map(Number).filter(y => DB.seasons[y]);
+  if(!years.length){
+    alert('Load your league data first, then export snapshots.');
+    return;
+  }
+  const scopeSel = document.getElementById('snapshot-scope-sel');
+  const scope = scopeSel ? scopeSel.value : 'all';
+  const targetYears = scope === 'all' ? years : [Number(scope)];
+
+  targetYears.forEach(year => {
+    const season = DB.seasons[year];
+    if(!season) return;
+    const snap = {
+      version: 1,
+      exported: new Date().toISOString(),
+      year,
+      leagueId: LEAGUE_IDS[year],
+      leagueName: (season.league && season.league.name) || '',
+      teams: season.teams,
+      rosterIdToManagerKey: season.rosterIdToManagerKey,
+      playoffWeekStart: season.playoffWeekStart,
+      matchupsByWeek: season.matchupsByWeek,
+      playoffMatchupsByWeek: DB.playoffMatchupsByWeek[year] || {},
+      playoffBracket: DB.playoffBrackets[year] || [],
+      starters: DB.allStarters.filter(s => s.year === year),
+      trades: DB.transactions.filter(t => t.year === year),
+      draftPicks: {
+        startup: year === FIRST_SEASON ? DB.startupDraftPicks : [],
+        rookie: DB.draftPicks[year] || []
+      }
+    };
+    const blob = new Blob([JSON.stringify(snap, null, 2)], {type:'application/json'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${year}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
+  alert(`Exported ${targetYears.length} snapshot file${targetYears.length!==1?'s':''}.\n\nUpload them to your GitHub repo in a folder called "snapshots/" to back them up.`);
+}
+
+// Re-runs the load using the currently signed-in username (or guest mode), without a
+// full browser reload — refetches everything live from Sleeper.
+function doRefresh(){
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
+  const input = document.getElementById('inp-user');
+  if(input) input.value = DB.myUsername || '';
+  startArchiveLoad(!DB.myUsername);
+}
+
+// Returns to the sign-in screen without reloading data (e.g. to sign in as someone else).
+function goBack(){
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('setup').style.display = 'flex';
 }
 
 /* ============================================================
@@ -1604,7 +1772,15 @@ function renderAll(){
   renderContentShell();
   renderSidebarNav();
   renderBottomNav();
+  renderSnapshotScopeSelect();
   switchTab('dashboard');
+}
+
+function renderSnapshotScopeSelect(){
+  const sel = document.getElementById('snapshot-scope-sel');
+  if(!sel) return;
+  const years = Object.keys(DB.seasons).map(Number).sort((a,b) => b-a);
+  sel.innerHTML = `<option value="all">All</option>` + years.map(y => `<option value="${y}">${seasonLabel(y)}</option>`).join('');
 }
 
 
@@ -4268,6 +4444,16 @@ async function loadAllData(onProgress = () => {}){
   onProgress(10, 'Loading season data…');
   await loadAllSeasons();
 
+  const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
+
+  // Phase 1: check for GitHub snapshot backups before hitting Sleeper at all.
+  onProgress(20, 'Checking backups…');
+  const snapshots = {};
+  await Promise.all(years.map(async y => {
+    const snap = await loadSnapshot(y);
+    if(snap){ snapshots[y] = snap; console.log(`[Archive] Snapshot found for ${seasonLabel(y)}`); }
+  }));
+
   onProgress(30, 'Loading player pool…');
   await loadPlayerPool();
   buildPlayerNameMap();
@@ -4276,13 +4462,20 @@ async function loadAllData(onProgress = () => {}){
   await loadAllDraftPicks();
   await loadStartupDraft();
 
-  const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
+  // Phase 2: load each season live from Sleeper; apply its snapshot afterward either
+  // way — as a gap-filler on success, or as the full fallback if the live load failed.
   for(let i=0; i<years.length; i++){
     const y = years[i];
     onProgress(55 + Math.round((i/years.length)*40), `Loading ${seasonLabel(y)} scoring… (${i+1}/${years.length})`);
-    await loadSeasonScoring(y);
-    await loadTransactions(y);
-    await loadPlayoffData(y);
+    try{
+      await loadSeasonScoring(y);
+      await loadTransactions(y);
+      await loadPlayoffData(y);
+      if(snapshots[y]) applySnapshot(snapshots[y], y);
+    }catch(e){
+      console.warn(`[Archive] Live load failed for ${seasonLabel(y)}:`, e.message);
+      if(snapshots[y]) applySnapshot(snapshots[y], y);
+    }
     buildHonorsForYear(y);
   }
   onProgress(100, '');
