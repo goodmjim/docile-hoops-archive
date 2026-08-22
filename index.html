@@ -1201,9 +1201,13 @@ async function loadTransactions(year){
 // slots, which incorrectly picked up stale/non-game weeks (Sleeper can return non-empty
 // starter arrays for weeks where no real game was played). The bracket endpoint only
 // ever contains real completed games, so there's nothing to guess.
-// Per league rules: the losers bracket is never fetched, and the 3rd-place game
-// (p===3 in winners_bracket) plus any bye entries (t1 or t2 null) are filtered out —
-// only the true championship-path bracket remains.
+// Per league rules: the losers bracket is never fetched, and every placement/consolation
+// game is filtered out — not just 3rd place, but 5th, 7th, etc. too. Sleeper tags the
+// true championship game with p===1 and leaves normal advancement games untagged
+// (p null/undefined); anything else (p===3, p===5, ...) is a consolation game and is
+// dropped. Bye entries (only one of t1/t2 populated) are KEPT so Round 1 byes can be
+// displayed — they're filtered out downstream at render time only where a real 1v1
+// score comparison is needed (e.g. W-L/PF tallies).
 async function loadPlayoffData(year){
   const season = DB.seasons[year];
   if(!season || !season.playoffWeekStart) return;
@@ -1211,7 +1215,7 @@ async function loadPlayoffData(year){
 
   let bracket = [];
   try{ bracket = await apiFetch(`/league/${leagueId}/winners_bracket`); }catch(e){ bracket = []; }
-  bracket = (bracket || []).filter(b => b.p !== 3 && b.t1 != null && b.t2 != null);
+  bracket = (bracket || []).filter(b => (!b.p || b.p === 1) && (b.t1 != null || b.t2 != null));
   DB.playoffBrackets[year] = bracket;
   DB.playoffMatchupsByWeek[year] = {};
   if(!bracket.length) return;
@@ -2028,6 +2032,7 @@ function renderMyScoringPanel(){
     <div style="overflow-x:auto;">
       <table class="data-table">
         <thead><tr>
+          <th style="cursor:default;">#</th>
           <th style="cursor:default;">Player</th>
           <th style="cursor:default;">Pos</th>
           <th onclick="sortMyScoringTable('total')">Total Pts</th>
@@ -2078,9 +2083,10 @@ function renderMyScoringTableBody(){
 
   const {deltas} = computeAllTimeRankDeltas();
 
-  if(!rows.length){ body.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-faint);padding:24px;">No starters found.</td></tr>`; return; }
+  if(!rows.length){ body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-faint);padding:24px;">No starters found.</td></tr>`; return; }
 
-  body.innerHTML = rows.map(r => `<tr>
+  body.innerHTML = rows.map((r,i) => `<tr>
+    <td style="color:var(--text-faint);">${i+1}</td>
     <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
     <td>${renderPositionBadge(r.positions)}</td>
     <td>${fmtNum(r.total)}</td>
@@ -2624,6 +2630,7 @@ function renderPlayersPanel(){
     <div style="overflow-x:auto;">
       <table class="data-table">
         <thead><tr>
+          <th style="cursor:default;">#</th>
           <th style="cursor:default;">Player</th>
           <th style="cursor:default;">Pos</th>
           <th style="cursor:default;">Team</th>
@@ -2707,9 +2714,10 @@ function renderPlayersTableBody(){
 
   const {deltas} = computeAllTimeRankDeltas();
 
-  if(!rows.length){ body.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`; return; }
+  if(!rows.length){ body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`; return; }
 
-  body.innerHTML = rows.slice(0,200).map(r => `<tr>
+  body.innerHTML = rows.slice(0,200).map((r,i) => `<tr>
+    <td style="color:var(--text-faint);">${i+1}</td>
     <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
     <td>${renderPositionBadge(r.positions)}</td>
     <td style="color:var(--text-dim);font-size:12px;">${r.teamAbbr}</td>
@@ -2960,44 +2968,61 @@ function renderLeagueTradesList(){
    ============================================================ */
 function computeAllTimePlayoffStandings(){
   const agg = {};
-  Object.keys(MANAGERS).forEach(k => { agg[k] = {championships:0, runnerUps:0, appearances:0}; });
+  Object.keys(MANAGERS).forEach(k => { agg[k] = {championships:0, appearances:0, wins:0, losses:0, pf:0, games:0}; });
 
   Object.entries(FINAL_STANDINGS).forEach(([yr, f]) => {
     const year = Number(yr);
     if(!f.order) return;
     const season = DB.seasons[year];
     const bracket = DB.playoffBrackets[year] || [];
+    const playoffWeeks = DB.playoffMatchupsByWeek[year] || {};
     const madePlayoffs = new Set();
+
     bracket.forEach(b => {
-      const k1 = season ? season.rosterIdToManagerKey[b.t1] : null;
-      const k2 = season ? season.rosterIdToManagerKey[b.t2] : null;
+      const k1 = (b.t1 != null && season) ? season.rosterIdToManagerKey[b.t1] : null;
+      const k2 = (b.t2 != null && season) ? season.rosterIdToManagerKey[b.t2] : null;
       if(k1) madePlayoffs.add(k1);
       if(k2) madePlayoffs.add(k2);
+
+      // W-L/PF only count real played games (both sides present) — byes don't count as a game.
+      if(b.t1 == null || b.t2 == null) return;
+      const week = season.playoffWeekStart + b.r - 1;
+      const mus = playoffWeeks[week] || [];
+      const e1 = mus.find(m => m.roster_id === b.t1), e2 = mus.find(m => m.roster_id === b.t2);
+      if(!e1 || !e2) return;
+      const s1 = getTeamComputedTotal(e1), s2 = getTeamComputedTotal(e2);
+      if(k1 && agg[k1]){ agg[k1].pf += s1; agg[k1].games++; if(b.w===b.t1) agg[k1].wins++; else agg[k1].losses++; }
+      if(k2 && agg[k2]){ agg[k2].pf += s2; agg[k2].games++; if(b.w===b.t2) agg[k2].wins++; else agg[k2].losses++; }
     });
+
+    // Playoff appearances = seasons made the playoffs, not total playoff games played.
     madePlayoffs.forEach(k => { if(agg[k]) agg[k].appearances++; });
     if(f.order[0] && agg[f.order[0]]) agg[f.order[0]].championships++;
-    if(f.order[1] && agg[f.order[1]]) agg[f.order[1]].runnerUps++;
   });
 
-  return Object.entries(agg).map(([k,d]) => ({k, ...d})).filter(d => d.appearances>0 || d.championships>0);
+  return Object.entries(agg)
+    .map(([k,d]) => ({k, ...d, avg: d.games ? d.pf/d.games : 0}))
+    .filter(d => d.appearances>0 || d.championships>0);
 }
 
 function renderPlayoffsPanel(){
   const el = document.getElementById('playoffs-body');
   const standings = computeAllTimePlayoffStandings()
-    .sort((a,b) => b.championships-a.championships || b.runnerUps-a.runnerUps || b.appearances-a.appearances);
+    .sort((a,b) => b.championships-a.championships || b.wins-a.wins || b.pf-a.pf);
 
   el.innerHTML = `
     <div class="card" style="margin-bottom:24px;">
       <h3>All-Time Playoff Standings</h3>
       <div style="overflow-x:auto;">
         <table class="data-table">
-          <thead><tr><th>Manager</th><th>Championships</th><th>Runner-Up</th><th>Playoff Appearances</th></tr></thead>
+          <thead><tr><th>Manager</th><th>W-L</th><th>Avg Score</th><th>Total PF</th><th>Playoff Appearances</th><th>Championships</th></tr></thead>
           <tbody>${standings.map(r => `<tr>
             <td>${(getManager(r.k)||{}).name||r.k}</td>
-            <td style="font-family:var(--font-mono);color:var(--gold);">${r.championships || '—'}</td>
-            <td style="font-family:var(--font-mono);">${r.runnerUps || '—'}</td>
+            <td style="font-family:var(--font-mono);">${r.wins}\u2013${r.losses}</td>
+            <td style="font-family:var(--font-mono);">${fmtNum(r.avg)}</td>
+            <td style="font-family:var(--font-mono);">${fmtNum(r.pf,0)}</td>
             <td style="font-family:var(--font-mono);">${r.appearances}</td>
+            <td style="font-family:var(--font-mono);color:var(--gold);">${r.championships || '—'}</td>
           </tr>`).join('')}</tbody>
         </table>
       </div>
@@ -3016,7 +3041,7 @@ function renderPlayoffsPanel(){
 function computePlayoffSeeds(year, bracket){
   const season = DB.seasons[year];
   const rosterIds = new Set();
-  bracket.forEach(b => { rosterIds.add(b.t1); rosterIds.add(b.t2); });
+  bracket.forEach(b => { if(b.t1 != null) rosterIds.add(b.t1); if(b.t2 != null) rosterIds.add(b.t2); });
   const participants = [...rosterIds].map(rid => {
     const team = (season.teams || []).find(t => t.rosterId === rid);
     return {rosterId: rid, wins: team ? team.wins : 0, pf: team ? team.pf : 0};
@@ -3025,6 +3050,10 @@ function computePlayoffSeeds(year, bracket){
   const seedMap = {};
   participants.forEach((p,i) => { seedMap[p.rosterId] = i+1; });
   return seedMap;
+}
+
+function renderSeedBadge(seed){
+  return `<span style="width:22px;height:22px;border-radius:6px;background:rgba(255,255,255,0.07);display:inline-flex;align-items:center;justify-content:center;font-size:11px;color:var(--text-faint);flex-shrink:0;">${seed||'?'}</span>`;
 }
 
 function renderPlayoffsFor(year){
@@ -3042,40 +3071,68 @@ function renderPlayoffsFor(year){
 
   const roundLabel = (r) => {
     const fromEnd = maxRound - r;
-    if(fromEnd === 0) return '\u{1F3C6} Championship';
-    if(fromEnd === 1) return 'Semifinals';
-    if(fromEnd === 2) return 'Quarterfinals';
-    return `Round ${r}`;
+    if(fromEnd === 0) return 'DOCILE CUP';
+    if(fromEnd === 1) return 'SEMIS';
+    if(fromEnd === 2) return 'QUARTERS';
+    return `ROUND ${r}`;
   };
 
   const getScore = (r, rosterId) => {
+    if(rosterId == null) return null;
     const week = season.playoffWeekStart + r - 1;
     const mus = (playoffWeeks && playoffWeeks[week]) || [];
     const entry = mus.find(m => m.roster_id === rosterId);
     return entry ? getTeamComputedTotal(entry) : null;
   };
 
-  let html = `<div style="display:flex;gap:20px;overflow-x:auto;padding-bottom:12px;">`;
+  const nameOf = (rid) => {
+    if(rid == null) return null;
+    const mk = season.rosterIdToManagerKey[rid];
+    return (getManager(mk)||{}).name || mk || '?';
+  };
+
+  const renderRow = (rid, score, isWinner) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;${isWinner ? 'background:rgba(216,176,74,0.12);' : 'background:var(--bg-panel);border-top:1px solid var(--border-soft);'}">
+      <span style="display:flex;align-items:center;gap:10px;">
+        ${renderSeedBadge(seedMap[rid])}
+        <span style="${isWinner ? 'color:var(--gold);font-weight:700;' : ''}">${nameOf(rid)}</span>
+      </span>
+      <span style="font-family:var(--font-mono);${isWinner ? 'color:var(--gold);font-weight:700;' : ''}">${score!=null ? fmtNum(score) : '—'}</span>
+    </div>`;
+
+  const renderByeRow = (rid) => `
+    <div style="border-radius:10px;overflow:hidden;border:1px solid var(--border-soft);opacity:0.5;margin-bottom:16px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;background:var(--bg-panel);">
+        <span style="display:flex;align-items:center;gap:10px;">${renderSeedBadge(seedMap[rid])}<span style="font-weight:700;">${nameOf(rid)}</span></span>
+        <span style="color:var(--text-faint);font-size:11px;letter-spacing:.05em;">BYE</span>
+      </div>
+    </div>`;
+
+  let html = `<div style="color:var(--gold);font-family:var(--font-display);font-weight:700;font-size:20px;margin-bottom:20px;">${seasonLabel(year)} \u00b7 DOCILE CUP</div>`;
+  html += `<div style="display:flex;gap:20px;overflow-x:auto;padding-bottom:12px;">`;
   rounds.forEach(r => {
     const matches = bracket.filter(b => b.r === r).sort((a,b) => (a.m||0)-(b.m||0));
-    html += `<div style="min-width:230px;flex-shrink:0;">
-      <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:10px;text-align:center;">${roundLabel(r)}</div>
-      <div style="display:flex;flex-direction:column;gap:16px;">`;
+    html += `<div style="min-width:260px;flex-shrink:0;">
+      <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:10px;text-align:center;">${roundLabel(r)}</div>`;
     matches.forEach(b => {
-      const k1 = season.rosterIdToManagerKey[b.t1], k2 = season.rosterIdToManagerKey[b.t2];
+      if(b.t1 == null || b.t2 == null){
+        // Bye — only one side present, shown as its own dimmed single-row card
+        const rid = b.t1 != null ? b.t1 : b.t2;
+        html += renderByeRow(rid);
+        return;
+      }
       const s1 = getScore(r, b.t1), s2 = getScore(r, b.t2);
-      html += `<div class="card" style="padding:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;${b.w===b.t1?'font-weight:700;':'color:var(--text-faint);'}">
-          <span><span style="color:var(--text-faint);font-size:11px;margin-right:6px;">#${seedMap[b.t1]||'?'}</span>${(getManager(k1)||{}).name||k1}</span>
-          <span style="font-family:var(--font-mono);">${s1!=null?fmtNum(s1):'—'}</span>
-        </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;${b.w===b.t2?'font-weight:700;':'color:var(--text-faint);'}">
-          <span><span style="color:var(--text-faint);font-size:11px;margin-right:6px;">#${seedMap[b.t2]||'?'}</span>${(getManager(k2)||{}).name||k2}</span>
-          <span style="font-family:var(--font-mono);">${s2!=null?fmtNum(s2):'—'}</span>
-        </div>
+      // Winner's row always renders first, matching the reference layout
+      const winnerRid = b.w === b.t1 ? b.t1 : b.t2;
+      const loserRid = b.w === b.t1 ? b.t2 : b.t1;
+      const winnerScore = b.w === b.t1 ? s1 : s2;
+      const loserScore = b.w === b.t1 ? s2 : s1;
+      html += `<div style="border-radius:10px;overflow:hidden;border:1px solid var(--border-soft);margin-bottom:16px;">
+        ${renderRow(winnerRid, winnerScore, true)}
+        ${renderRow(loserRid, loserScore, false)}
       </div>`;
     });
-    html += `</div></div>`;
+    html += `</div>`;
   });
   html += `</div>`;
 
