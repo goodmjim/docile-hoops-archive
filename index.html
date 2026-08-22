@@ -877,6 +877,52 @@ function computeStandingsRankDeltas(){
 
 // Head-to-head record between two managers across every loaded season's regular-season matchups.
 // Single source of truth for head-to-head records — used by both My H2H and League H2H,
+/* ============================================================
+   TRADED DRAFT PICK OWNERSHIP TRACKING
+   Sleeper's trade data pins a pick's `roster_id` to its ORIGINAL owner forever
+   (confirmed against real trade data), while `previous_owner_id`/`owner_id` on
+   each trade's draft_picks entry show who held it immediately before/after that
+   specific trade. A single trade's previous_owner_id only tells you the most
+   recent stop, though — for a pick traded 2+ times, we need to replay every
+   prior trade of that exact pick (same season+round+original roster_id) in
+   chronological order to find the TRUE original owner and full chain.
+   This still can't resolve which player was drafted with a specific traded pick
+   (Sleeper's draft results don't preserve enough info to disambiguate when a team
+   ends up with multiple picks in the same round — verified against real data),
+   but it can accurately show provenance: whose pick it originally was.
+   ============================================================ */
+function getPickOwnershipChainUpTo(seasonYear, round, originalRosterId, uptoCreated){
+  const originalSeason = DB.seasons[seasonYear];
+  const rosterIdToKey = originalSeason ? originalSeason.rosterIdToManagerKey : {};
+
+  const moves = DB.transactions
+    .filter(t => t.type === 'trade' && Array.isArray(t.draft_picks))
+    .flatMap(t => (t.draft_picks || [])
+      .filter(dp => dp.round === round && String(dp.season) === String(seasonYear) && dp.roster_id === originalRosterId)
+      .map(dp => ({owner_id: dp.owner_id, created: t.created}))
+    )
+    .filter(mv => mv.created <= uptoCreated)
+    .sort((a,b) => a.created - b.created);
+
+  const chain = [rosterIdToKey[originalRosterId]];
+  moves.forEach(mv => { chain.push(rosterIdToKey[mv.owner_id]); });
+  return chain; // last element is the owner as of uptoCreated (inclusive)
+}
+
+// Formats a traded pick for display, e.g. "2022 3rd Round pick (Amol's)" for a
+// pick traded directly by its original owner, or "2022 2nd Round pick (via Declan)"
+// if it passed through one or more other managers first.
+function formatTradedPick(dp, tradeCreated, seasonYear){
+  const roundLabel = {1:'1st', 2:'2nd', 3:'3rd'}[dp.round] || `${dp.round}th`;
+  const label = `${seasonLabel(Number(seasonYear))} ${roundLabel} Round pick`;
+  const chain = getPickOwnershipChainUpTo(seasonYear, dp.round, dp.roster_id, tradeCreated);
+  const priorChain = chain.slice(0, -1); // everyone who owned it before THIS trade
+  if(!priorChain.length) return label;
+  const originalKey = priorChain[0];
+  const originalName = (getManager(originalKey) || {}).name || originalKey;
+  return priorChain.length > 1 ? `${label} (via ${originalName})` : `${label} (${originalName}'s)`;
+}
+
 // so the two pages can never drift out of sync with each other. Returns a full per-game
 // log alongside the win totals. Ties count toward mk1 (matching the >= convention used
 // elsewhere in the app, e.g. Weekly Recap results and POTG's winning-team tiebreak) —
@@ -2474,7 +2520,7 @@ function renderMyTradesList(){
         return {name: meta.name || pid, pts};
       });
       (t.draft_picks || []).filter(p => p.owner_id === rid).forEach(p => {
-        items.push({name:`${p.season || t.year} Round ${p.round} pick`, pts:0});
+        items.push({name: formatTradedPick(p, t.created, p.season || t.year), pts:0});
       });
       return items;
     };
@@ -3048,7 +3094,7 @@ function renderLeagueTradesList(){
         return {name: meta.name || pid, pts};
       });
       (t.draft_picks || []).filter(p => p.owner_id === rid).forEach(p => {
-        items.push({name:`${p.season || t.year} Round ${p.round} pick`, pts:0});
+        items.push({name: formatTradedPick(p, t.created, p.season || t.year), pts:0});
       });
       return items;
     };
