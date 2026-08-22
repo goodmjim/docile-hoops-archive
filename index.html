@@ -1242,8 +1242,7 @@ const NAV_GROUPS = [
       {key:'myh2h',      label:'My H2H',           icon:'ti-swords',            desc:'Your all-time record against every other manager.', ready:true},
       {key:'mydraft',    label:'My Draft',         icon:'ti-clipboard-list',   desc:'Every rookie pick you\u2019ve made, with points scored for your team.', ready:true},
       {key:'mytrades',   label:'My Trades',        icon:'ti-arrows-exchange',  desc:'All trades involving your roster across loaded seasons.', ready:true},
-      {key:'mylineup',   label:'All-Time Lineup',  icon:'ti-crown',            desc:'Your best-ever starting lineup across every season you\u2019ve played.', ready:true},
-      {key:'mynba',      label:'My NBA Breakdown', icon:'ti-building-stadium', desc:'How often you\u2019ve started players from each NBA franchise.', ready:true}
+      {key:'mylineup',   label:'All-Time Lineup',  icon:'ti-crown',            desc:'Your best-ever starting lineup across every season you\u2019ve played.', ready:true}
     ]
   },
   {
@@ -1698,7 +1697,6 @@ const RENDER_FNS = {
   mydraft: renderMyDraftPanel,
   mytrades: renderMyTradesPanel,
   mylineup: renderMyLineupPanel,
-  mynba: renderMyNbaPanel,
   playerscoring: renderPlayersPanel,
   playergraphs: renderPlayerGraphsPanel,
   leaguetimeline: renderLeagueTimeline,
@@ -2579,59 +2577,6 @@ function renderMyLineupPanel(){
           <span style="font-family:var(--font-mono);font-size:12.5px;color:var(--text-dim);">${valueLabel(r)}</span>
         </div>`).join('')}
     </div>
-  `;
-}
-
-/* ============================================================
-   MY NBA BREAKDOWN
-   How often the signed-in manager has started players from each NBA team.
-   Note: Sleeper only stores each player's CURRENT team, so a traded player's
-   history reflects their present team, not their team at the time they started.
-   ============================================================ */
-function renderMyNbaPanel(){
-  const el = document.getElementById('mynba-body');
-  if(!DB.myManagerKey){
-    el.innerHTML = `<div class="empty-state"><i class="ti ti-user-question"></i>Sign in with a recognized Fellowship username to see your NBA team breakdown.</div>`;
-    return;
-  }
-  const myStarters = DB.allStarters.filter(s => s.managerKey === DB.myManagerKey);
-  const byTeam = {};
-  myStarters.forEach(s => {
-    const meta = DB.playerMeta[s.pid];
-    const nbaTeam = meta ? meta.teamAbbr : null;
-    if(!nbaTeam) return;
-    if(!byTeam[nbaTeam]) byTeam[nbaTeam] = {team:nbaTeam, appearances:0, players:new Set()};
-    byTeam[nbaTeam].appearances++;
-    byTeam[nbaTeam].players.add(s.pid);
-  });
-
-  const rows = Object.values(byTeam).map(r => ({...r, unique:r.players.size})).sort((a,b) => b.appearances - a.appearances);
-  if(!rows.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-building-stadium"></i>No data found.</div>`; return; }
-
-  const maxApp = Math.max(...rows.map(r => r.appearances));
-  el.innerHTML = `
-    <div class="card" style="border-color:var(--bad);margin-bottom:16px;">
-      <div style="display:flex;align-items:flex-start;gap:10px;">
-        <i class="ti ti-alert-triangle" style="color:var(--bad);font-size:18px;flex-shrink:0;margin-top:1px;"></i>
-        <div>
-          <div style="font-weight:700;font-size:13px;margin-bottom:4px;">Known limitation \u2014 likely to change</div>
-          <div style="color:var(--text-dim);font-size:12.5px;line-height:1.5;">Sleeper only stores each player's <em>current</em> NBA team, not the team they were on at the time they were in your lineup. A player traded mid-career shows up entirely under their current team here, which can meaningfully misrepresent this breakdown for anyone who's changed teams. This page needs a rethink before it's trustworthy \u2014 treat it as a rough approximation for now.</div>
-        </div>
-      </div>
-    </div>
-    <table class="data-table">
-      <thead><tr><th>NBA Team</th><th>Appearances</th><th>Unique Players</th><th></th></tr></thead>
-      <tbody>${rows.map(r => `<tr>
-        <td style="font-weight:600;">${r.team}</td>
-        <td style="font-family:var(--font-mono);">${r.appearances}</td>
-        <td style="font-family:var(--font-mono);">${r.unique}</td>
-        <td style="width:140px;">
-          <div style="height:5px;background:var(--border);border-radius:3px;overflow:hidden;">
-            <div style="height:100%;width:${(r.appearances/maxApp*100).toFixed(0)}%;background:var(--accent);border-radius:3px;"></div>
-          </div>
-        </td>
-      </tr>`).join('')}</tbody>
-    </table>
   `;
 }
 
