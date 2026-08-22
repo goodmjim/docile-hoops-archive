@@ -87,7 +87,7 @@ button{font-family:inherit;cursor:pointer;}
 .setup-logo p{color:var(--text-faint);font-size:12.5px;margin:0;}
 .fg{margin-bottom:16px;}
 .fg label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-faint);margin-bottom:6px;}
-.fg input{
+.fg input, .fg select{
   width:100%;padding:10px 14px;
   border-radius:var(--radius-md);
   border:1px solid var(--border);
@@ -95,7 +95,7 @@ button{font-family:inherit;cursor:pointer;}
   color:var(--text);
   font-size:14px;
 }
-.fg input:focus{outline:none;border-color:var(--accent-dim);}
+.fg input:focus, .fg select:focus{outline:none;border-color:var(--accent-dim);}
 .btn-load{
   width:100%;padding:11px;
   background:var(--accent);
@@ -423,8 +423,8 @@ table.data-table tbody tr:hover{background:var(--bg-hover);}
       <p>Seven seasons. One place. All the records.</p>
     </div>
     <div class="fg">
-      <label for="inp-user">Your Sleeper username</label>
-      <input id="inp-user" placeholder="e.g. Goodmjim" autocomplete="off">
+      <label for="inp-user">Who are you?</label>
+      <select id="inp-user"></select>
     </div>
     <button class="btn-load" id="btn-load" onclick="startArchiveLoad()">Enter the Archive →</button>
     <button class="btn-guest" onclick="startArchiveLoad(true)">Continue without a username</button>
@@ -4380,22 +4380,7 @@ document.getElementById('modal-overlay').addEventListener('click', (e) => {
 
 /* ============================================================
    SIGN-IN / MANAGER ROUTING
-   Matches the entered username against the known MANAGERS roster
-   (case-insensitive, resolving known aliases like GelEBeans -> CarlCanary)
-   rather than hitting Sleeper's /user endpoint — this is a closed
-   12-person league, so membership in our own roster IS the identity
-   check that matters here, and it costs zero extra API calls.
    ============================================================ */
-function resolveManagerFromUsername(rawUsername){
-  if(!rawUsername) return null;
-  const lower = rawUsername.toLowerCase();
-  const directKey = Object.keys(MANAGERS).find(k => k.toLowerCase() === lower);
-  if(directKey) return directKey;
-  const aliasKey = Object.keys(USERNAME_ALIASES).find(k => k.toLowerCase() === lower);
-  if(aliasKey) return USERNAME_ALIASES[aliasKey];
-  return null;
-}
-
 function setSetupStatus(msg, isError=false){
   const el = document.getElementById('setup-status');
   el.textContent = msg;
@@ -4407,7 +4392,7 @@ function setSetupProgress(pct){
 
 async function startArchiveLoad(guest=false){
   const btn = document.getElementById('btn-load');
-  const username = guest ? '' : document.getElementById('inp-user').value.trim();
+  const selectedKey = guest ? '' : document.getElementById('inp-user').value;
 
   if(CF_WORKER_URL.includes('YOUR-WORKER')){
     setSetupStatus('CF_WORKER_URL is still a placeholder — set it to your deployed Cloudflare Worker.', true);
@@ -4415,14 +4400,11 @@ async function startArchiveLoad(guest=false){
   }
 
   btn.disabled = true;
-  DB.myUsername = username || null;
-  DB.myManagerKey = username ? resolveManagerFromUsername(username) : null;
-
-  if(username && !DB.myManagerKey){
-    setSetupStatus(`"${username}" isn't a recognized Fellowship manager — continuing without My Team personalization.`);
-  } else {
-    setSetupStatus('Loading the archive…');
-  }
+  // The dropdown only ever offers real manager keys, so no fuzzy username matching
+  // is needed here — selection is guaranteed valid (or empty, for guest mode).
+  DB.myUsername = selectedKey || null;
+  DB.myManagerKey = selectedKey || null;
+  setSetupStatus('Loading the archive…');
   setSetupProgress(5);
 
   try{
@@ -4481,10 +4463,19 @@ async function loadAllData(onProgress = () => {}){
   onProgress(100, '');
 }
 
+function populateSignInDropdown(){
+  const sel = document.getElementById('inp-user');
+  if(!sel) return;
+  const jimmyKey = 'Goodmjim';
+  const others = Object.keys(MANAGERS)
+    .filter(k => k !== jimmyKey)
+    .sort((a,b) => MANAGERS[a].name.localeCompare(MANAGERS[b].name));
+  const ordered = [jimmyKey, ...others];
+  sel.innerHTML = ordered.map(k => `<option value="${k}">${MANAGERS[k].name}</option>`).join('');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('inp-user').addEventListener('keydown', (e) => {
-    if(e.key === 'Enter') startArchiveLoad();
-  });
+  populateSignInDropdown();
 });
 </script>
 </body>
