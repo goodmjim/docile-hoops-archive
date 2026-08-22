@@ -232,6 +232,7 @@ button{font-family:inherit;cursor:pointer;}
 .panel{display:none;}
 .panel.active{display:block;animation:fadeIn .18s ease;}
 @keyframes fadeIn{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:none;}}
+@keyframes spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 
 .panel-header{margin-bottom:20px;}
 .panel-header h1{font-size:24px;}
@@ -4084,27 +4085,265 @@ function renderPotgLog(year){
   }).join('');
 }
 
+/* ============================================================
+   SMART SEARCH
+   Natural-language Q&A over the archive, powered by callClaude(). Mirrors the
+   football archive's pattern: a compact text summary of the loaded data
+   (buildLeagueContext) is sent as context alongside the question, so Claude
+   can answer with real numbers rather than guessing.
+   ============================================================ */
+const SEARCH_EXAMPLES = [
+  'Who has the best record against Jimmy?',
+  'How has Nikola Jokic performed when started against Boone?',
+  'Which manager has won the most championships?',
+  'Who are the top all-time scoring centers in the Fellowship?',
+  'Which manager has been unluckiest by projections?'
+];
+
+let searchHistory = [];
+
+function buildLeagueContext(){
+  const lines = [];
+
+  lines.push(`LEAGUE: ${LEAGUE_NAME}, active since ${seasonLabel(FIRST_SEASON)}`);
+  lines.push(`MANAGERS: ${Object.values(MANAGERS).map(m=>m.name).join(', ')}`);
+
+  lines.push('\nCHAMPIONS BY SEASON:');
+  Object.entries(FINAL_STANDINGS).forEach(([yr,f]) => {
+    lines.push(`  ${seasonLabel(Number(yr))}: ${(getManager(f.champion)||{}).name || f.champion}`);
+  });
+
+  const years = Object.keys(DB.seasons).map(Number);
+  if(years.length){
+    lines.push(`\nLOADED SEASONS: ${years.map(y=>seasonLabel(y)).join(', ')}`);
+    lines.push(`TOTAL STARTER ENTRIES LOADED: ${DB.allStarters.length.toLocaleString()}`);
+
+    lines.push('\nALL-TIME STANDINGS (regular season, from official Sleeper records):');
+    const records = computeAllTimeManagerRecords();
+    Object.entries(records).sort((a,b)=>b[1].wins-a[1].wins).forEach(([k,d]) => {
+      lines.push(`  ${(getManager(k)||{}).name||k}: ${d.wins}-${d.losses}, ${d.pf.toFixed(0)} PF`);
+    });
+
+    const pAgg = {};
+    DB.allStarters.forEach(s => {
+      if(!pAgg[s.pid]) pAgg[s.pid] = {pts:0, starts:0};
+      pAgg[s.pid].pts += (s.points||0); pAgg[s.pid].starts++;
+    });
+
+    lines.push('\nTOP 20 PLAYERS BY TOTAL LINEUP POINTS (all-time, starts only):');
+    Object.entries(pAgg).sort((a,b)=>b[1].pts-a[1].pts).slice(0,20).forEach(([pid,d]) => {
+      const meta = DB.playerMeta[pid];
+      const name = meta ? meta.name : `PID:${pid}`;
+      const pos = getPlayerPositions(pid, CURRENT_SEASON)[0] || '?';
+      lines.push(`  ${name} (${pos}): ${d.pts.toFixed(1)} pts in ${d.starts} starts`);
+    });
+
+    lines.push('\nPLAYER-MANAGER HISTORY (top 5 players per manager by points):');
+    const mgrPlayerPts = {};
+    DB.allStarters.forEach(s => {
+      const k = s.managerKey; if(!k) return;
+      if(!mgrPlayerPts[k]) mgrPlayerPts[k] = {};
+      if(!mgrPlayerPts[k][s.pid]) mgrPlayerPts[k][s.pid] = {pts:0, starts:0};
+      mgrPlayerPts[k][s.pid].pts += (s.points||0);
+      mgrPlayerPts[k][s.pid].starts++;
+    });
+    Object.entries(mgrPlayerPts).forEach(([mgr, players]) => {
+      const top = Object.entries(players).sort((a,b)=>b[1].pts-a[1].pts).slice(0,5);
+      const names = top.map(([pid,d]) => {
+        const meta = DB.playerMeta[pid];
+        const name = meta ? meta.name : `PID:${pid}`;
+        return `${name}(${d.pts.toFixed(0)}pts/${d.starts}st)`;
+      });
+      lines.push(`  ${(getManager(mgr)||{}).name||mgr}: ${names.join(', ')}`);
+    });
+
+    lines.push('\nHEAD-TO-HEAD MATCHUP RESULTS:');
+    const mgrKeys = Object.keys(MANAGERS);
+    const seenPairs = new Set();
+    mgrKeys.forEach(k1 => {
+      mgrKeys.forEach(k2 => {
+        if(k1 === k2) return;
+        const pairKey = [k1,k2].sort().join('|');
+        if(seenPairs.has(pairKey)) return;
+        seenPairs.add(pairKey);
+        const h2h = computeAllTimeH2H(k1, k2);
+        if(h2h.w1 + h2h.w2 === 0) return;
+        lines.push(`  ${(getManager(k1)||{}).name} vs ${(getManager(k2)||{}).name}: ${(getManager(k1)||{}).name} leads ${h2h.w1}-${h2h.w2}`);
+      });
+    });
+
+    lines.push('\nPLAYER PERFORMANCE BY OPPONENT (top 30 most-started players):');
+    const pidOpponent = {};
+    Object.entries(DB.seasons).forEach(([yearStr, season]) => {
+      const year = Number(yearStr);
+      Object.entries(season.matchupsByWeek || {}).forEach(([w, mus]) => {
+        const byId = {};
+        mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
+        Object.values(byId).forEach(pair => {
+          if(pair.length < 2) return;
+          const [a,b] = pair;
+          const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
+          const process = (matchup, mgr, opp) => {
+            const ppts = matchup.players_points || {};
+            (matchup.starters || []).forEach(pid => {
+              if(!pid || pid === '0') return;
+              if(!pidOpponent[pid]) pidOpponent[pid] = [];
+              pidOpponent[pid].push({mgr, opp, pts: ppts[pid] ?? null});
+            });
+          };
+          process(a, ka, kb);
+          process(b, kb, ka);
+        });
+      });
+    });
+    const topPids = Object.entries(pAgg).sort((a,b)=>b[1].starts-a[1].starts).slice(0,30).map(([pid])=>pid);
+    topPids.forEach(pid => {
+      const meta = DB.playerMeta[pid];
+      const name = meta ? meta.name : `PID:${pid}`;
+      const pos = getPlayerPositions(pid, CURRENT_SEASON)[0] || '?';
+      const entries = pidOpponent[pid] || [];
+      const byOpp = {};
+      entries.forEach(e => {
+        const oppName = (getManager(e.opp)||{}).name || e.opp;
+        if(!byOpp[oppName]) byOpp[oppName] = {starts:0, total:0};
+        byOpp[oppName].starts++; byOpp[oppName].total += (e.pts||0);
+      });
+      const summary = Object.entries(byOpp).map(([opp,d]) => `vs${opp}:${d.starts}st/${d.total.toFixed(0)}pts`).join(',');
+      if(summary) lines.push(`  ${name}(${pos}): ${summary}`);
+    });
+  }
+
+  lines.push('\nSEASON HONORS (All-Docile 1st Team and All-Rookie Team by year):');
+  Object.entries(DB.awards.allDocile).forEach(([yr, teams]) => {
+    const roster = (teams && teams[1]) || [];
+    const names = roster.filter(r=>r.pid).map(r => (DB.playerMeta[r.pid]||{}).name || r.pid);
+    if(names.length) lines.push(`  ${seasonLabel(Number(yr))} All-Docile 1st Team: ${names.join(', ')}`);
+  });
+  Object.entries(DB.awards.allRookie).forEach(([yr, teams]) => {
+    const roster = (teams && teams[1]) || [];
+    const names = roster.filter(r=>r.pid).map(r => (DB.playerMeta[r.pid]||{}).name || r.pid);
+    if(names.length) lines.push(`  ${seasonLabel(Number(yr))} All-Rookie Team: ${names.join(', ')}`);
+  });
+
+  lines.push('\nPOTG/POTW LEADERS (all-time top 10 by POTG count):');
+  const allLog = computePotgData('all');
+  const byPlayer = {};
+  allLog.forEach(e => {
+    if(!byPlayer[e.pid]) byPlayer[e.pid] = {potg:0, potw:0};
+    byPlayer[e.pid].potg++;
+    if(e.type === 'POTW') byPlayer[e.pid].potw++;
+  });
+  Object.entries(byPlayer).sort((a,b)=>b[1].potg-a[1].potg).slice(0,10).forEach(([pid,d]) => {
+    const name = (DB.playerMeta[pid]||{}).name || pid;
+    lines.push(`  ${name}: ${d.potg} POTG, ${d.potw} POTW`);
+  });
+
+  const bracketYears = Object.keys(DB.playoffBrackets).map(Number).filter(y => (DB.playoffBrackets[y]||[]).length);
+  if(bracketYears.length){
+    lines.push('\nPLAYOFF CHAMPIONSHIP GAMES:');
+    bracketYears.forEach(year => {
+      const game = getChampionshipGame(year);
+      if(game) lines.push(`  ${seasonLabel(year)}: ${(getManager(game.champKey)||{}).name} def ${(getManager(game.runnerUpKey)||{}).name} (${game.champPts.toFixed(1)}-${game.runnerUpPts.toFixed(1)})`);
+    });
+  }
+
+  const withProj = DB.allStarters.filter(s => s.projected != null && s.points != null);
+  if(withProj.length){
+    lines.push('\nPROJECTION PERFORMANCE (manager-level, avg diff per start vs. projection):');
+    const mgrProj = {};
+    withProj.forEach(s => {
+      const k = s.managerKey; if(!k) return;
+      if(!mgrProj[k]) mgrProj[k] = {diff:0, n:0, beat:0};
+      mgrProj[k].diff += (s.points - s.projected); mgrProj[k].n++;
+      if(s.points >= s.projected) mgrProj[k].beat++;
+    });
+    Object.entries(mgrProj).sort((a,b)=>(b[1].diff/b[1].n)-(a[1].diff/a[1].n)).forEach(([k,d]) => {
+      const beatPct = Math.round(d.beat/d.n*100);
+      lines.push(`  ${(getManager(k)||{}).name||k}: avg ${d.diff>=0?'+':''}${(d.diff/d.n).toFixed(1)} pts/start vs projection (${beatPct}% beat, ${d.n} starts)`);
+    });
+  }
+
+  return lines.join('\n');
+}
+
+async function runSearch(){
+  const q = (document.getElementById('search-input').value || '').trim();
+  if(!q) return;
+  const resultEl = document.getElementById('search-result');
+  resultEl.innerHTML = `<div style="display:flex;align-items:center;gap:10px;color:var(--text-faint);font-size:13px;padding:16px 0;"><i class="ti ti-loader-2" style="animation:spin 1s linear infinite;"></i>Searching the archive…</div>`;
+  document.getElementById('search-btn').disabled = true;
+  try{
+    const context = buildLeagueContext();
+    const systemPrompt = `You are the archivist for the ${LEAGUE_NAME}, a private fantasy basketball league active since ${seasonLabel(FIRST_SEASON)}. Answer questions about player performance, manager records, head-to-head matchups, awards, projections, and history using the data provided.
+
+Be precise and specific — use actual numbers. Keep answers concise: 2-4 sentences for simple questions, a short list for complex ones. Use manager first names (Jimmy, Boone, Kyle, etc.), not team names. Include position in parentheses when referencing players. All scoring reflects starting-lineup points only, regular season only, unless the question is specifically about playoffs.
+
+If the data is insufficient to answer precisely, say so and share what you do know.
+
+LEAGUE DATA:
+${context}`;
+    const answer = await callClaude(systemPrompt, q);
+    const formatted = answer
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n\n/g, '</p><p>')
+      .replace(/\n- /g, '<br>\u2022 ')
+      .replace(/\n(\d+)\. /g, '<br>$1. ');
+    resultEl.innerHTML = `<div class="card">
+      <div style="color:var(--text-faint);font-style:italic;font-size:12.5px;margin-bottom:8px;">\u275D ${q} \u275E</div>
+      <p style="font-size:13.5px;line-height:1.6;">${formatted}</p>
+    </div>`;
+    searchHistory.unshift({q, a:answer});
+    renderSearchHistory();
+    document.getElementById('search-input').value = '';
+  }catch(e){
+    resultEl.innerHTML = `<div class="empty-state" style="color:var(--bad);"><i class="ti ti-alert-triangle"></i>${e.message}</div>`;
+  }finally{
+    document.getElementById('search-btn').disabled = false;
+  }
+}
+
+function setSearchQ(q){
+  document.getElementById('search-input').value = q;
+  document.getElementById('search-input').focus();
+}
+
+function renderSearchExamples(){
+  const el = document.getElementById('search-examples-chips');
+  if(!el) return;
+  el.innerHTML = SEARCH_EXAMPLES.map((q,i) => `<div class="yr-chip" style="cursor:pointer;" onclick="setSearchQ(SEARCH_EXAMPLES[${i}])">${q}</div>`).join('');
+}
+
+function renderSearchHistory(){
+  const el = document.getElementById('search-history');
+  if(!el) return;
+  if(!searchHistory.length){ el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Previous Questions</div>` +
+    searchHistory.slice(0,8).map((h,i) => `
+      <div class="card" style="margin-bottom:8px;cursor:pointer;" onclick="setSearchQ(searchHistory[${i}].q)">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px;">${h.q}</div>
+        <div style="font-size:12px;color:var(--text-faint);">${h.a.replace(/\*\*/g,'').substring(0,140)}\u2026</div>
+      </div>`).join('');
+}
+
 function renderSearch(){
   const el = document.getElementById('search-body');
   el.innerHTML = `
-    <input id="search-input" type="text" placeholder="Search players by name..."
-      style="width:100%;padding:10px 14px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:14px;margin-bottom:16px;">
-    <div id="search-results" class="empty-state"><i class="ti ti-search"></i>Start typing to search the Fellowship's player pool.</div>
+    <div style="margin-bottom:20px;">
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Try asking\u2026</div>
+      <div id="search-examples-chips" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;flex-wrap:wrap;">
+      <textarea id="search-input" placeholder="e.g. How has Nikola Jokic performed when started against Boone?"
+        style="flex:1;min-width:220px;min-height:72px;padding:12px 14px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-family:inherit;font-size:13.5px;resize:vertical;"
+        onkeydown="if(event.key==='Enter'&&(event.metaKey||event.ctrlKey))runSearch()"></textarea>
+      <button id="search-btn" onclick="runSearch()"
+        style="background:var(--accent);color:#1a0f05;border:none;border-radius:var(--radius-md);font-family:var(--font-display);font-weight:700;font-size:14px;letter-spacing:.03em;padding:12px 22px;white-space:nowrap;height:fit-content;">ASK \u2192</button>
+    </div>
+    <div id="search-result"></div>
+    <div id="search-history" style="margin-top:20px;"></div>
   `;
-  document.getElementById('search-input').addEventListener('input', (e) => runPlayerSearch(e.target.value));
-}
-
-function runPlayerSearch(query){
-  const el = document.getElementById('search-results');
-  const q = normalizeNameForMatch(query);
-  if(!q || q.length < 2){ el.innerHTML = `<div class="empty-state"><i class="ti ti-search"></i>Start typing to search the Fellowship's player pool.</div>`; return; }
-  const matches = Object.keys(DB.playerMeta).filter(pid => normalizeNameForMatch(DB.playerMeta[pid].name).includes(q)).slice(0,40);
-  if(!matches.length){ el.innerHTML = `<div class="empty-state"><i class="ti ti-mood-empty"></i>No players found.</div>`; return; }
-  el.innerHTML = `<div class="card-grid">${matches.map(pid => `
-    <div class="card" style="cursor:pointer;" onclick="openPlayerModal('${pid}')">
-      <div style="font-weight:700;">${DB.playerMeta[pid].name}</div>
-      <div style="color:var(--text-dim);font-size:12px;margin-top:4px;">${renderPositionBadge(getPlayerPositions(pid, DB.currentSeason))} ${DB.playerMeta[pid].teamAbbr||''}</div>
-    </div>`).join('')}</div>`;
+  renderSearchExamples();
+  renderSearchHistory();
 }
 
 /* ============================================================
@@ -4261,11 +4500,6 @@ function openPlayerModal(pid){
         <div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;">Overall Rank</div>
         <div style="font-size:19px;font-weight:700;color:var(--accent);">${overallRk?'#'+overallRk:'—'}</div>
       </div>
-    </div>
-
-    <div class="card" style="margin-bottom:12px;">
-      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Notes</div>
-      <div style="font-style:italic;color:var(--text-faint);font-size:12.5px;">No notes yet.</div>
     </div>
 
     ${acq ? `<div class="card" style="margin-bottom:12px;">
