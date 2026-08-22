@@ -1195,22 +1195,34 @@ async function loadTransactions(year){
 // only, and deliberately never touches DB.allStarters/player-stat tracking. We don't know
 // the exact number of playoff weeks up front, so we probe a generous range and keep only
 // the weeks that actually returned real matchup data.
+// Uses Sleeper's own winners_bracket endpoint as the authoritative source of which
+// games are real playoff games — this replaces an earlier heuristic that probed a
+// fixed window of weeks past playoffWeekStart and guessed based on non-empty starter
+// slots, which incorrectly picked up stale/non-game weeks (Sleeper can return non-empty
+// starter arrays for weeks where no real game was played). The bracket endpoint only
+// ever contains real completed games, so there's nothing to guess.
+// Per league rules: the losers bracket is never fetched, and the 3rd-place game
+// (p===3 in winners_bracket) plus any bye entries (t1 or t2 null) are filtered out —
+// only the true championship-path bracket remains.
 async function loadPlayoffData(year){
   const season = DB.seasons[year];
   if(!season || !season.playoffWeekStart) return;
   const leagueId = LEAGUE_IDS[year];
-  const startWeek = season.playoffWeekStart;
-  const probeWeeks = Array.from({length:6}, (_,i) => startWeek + i); // generous upper bound
 
-  const results = await Promise.all(probeWeeks.map(w =>
+  let bracket = [];
+  try{ bracket = await apiFetch(`/league/${leagueId}/winners_bracket`); }catch(e){ bracket = []; }
+  bracket = (bracket || []).filter(b => b.p !== 3 && b.t1 != null && b.t2 != null);
+  DB.playoffBrackets[year] = bracket;
+  DB.playoffMatchupsByWeek[year] = {};
+  if(!bracket.length) return;
+
+  const maxRound = Math.max(...bracket.map(b => b.r));
+  const weeks = Array.from({length:maxRound}, (_,i) => season.playoffWeekStart + i);
+
+  const results = await Promise.all(weeks.map(w =>
     apiFetch(`/league/${leagueId}/matchups/${w}`).then(mu => ({w, mu})).catch(() => ({w, mu:[]}))
   ));
-
-  DB.playoffMatchupsByWeek[year] = {};
-  results.forEach(({w, mu}) => {
-    const hasRealGames = mu.some(m => (m.starters||[]).some(pid => pid && pid !== '0'));
-    if(hasRealGames) DB.playoffMatchupsByWeek[year][w] = mu;
-  });
+  results.forEach(({w, mu}) => { DB.playoffMatchupsByWeek[year][w] = mu; });
 }
 
 async function loadSeasonScoring(year){
@@ -1424,6 +1436,8 @@ const DB = {
   playoffMatchupsByWeek: {},     // DB.playoffMatchupsByWeek[year][week] = raw Sleeper matchup entries — separate from
                                   // DB.allStarters/matchupsByWeek (regular season only), since playoff results are
                                   // team/bracket-level info and don't feed player-stat tracking (POTG/All-Docile/etc).
+  playoffBrackets: {},           // DB.playoffBrackets[year] = winners_bracket entries {r,m,t1,t2,w,l,p}, filtered to
+                                  // exclude the 3rd-place game and any null-team (bye) entries — championship-path only.
   awards: {
     // POTG/POTW are NOT cached here — computed on demand via computePotgData(yearFilter),
     // same as the football archive's computePotgData(). Only the All-Docile/All-Rookie
@@ -2712,31 +2726,39 @@ function renderPlayersTableBody(){
    Reduced awards profile per league rules — champions only, no
    runner-up/loser trophies exist for basketball.
    ============================================================ */
-// Finds the championship game for a season by matching a playoff matchup's two
-// participants against FINAL_STANDINGS.order[0]/[1] — same identification approach
-// as the Playoffs page, reused here for League Timeline's finals score.
+// Finds the championship game for a season using Sleeper's own winners_bracket p===1
+// entry — the same authoritative source the Playoffs page now uses, rather than the
+// earlier heuristic of guessing which matchup's participants matched the final order.
 function getChampionshipGame(year){
   const season = DB.seasons[year];
+  const bracket = DB.playoffBrackets[year];
   const playoffWeeks = DB.playoffMatchupsByWeek[year];
-  const standing = FINAL_STANDINGS[year];
-  if(!season || !playoffWeeks || !standing || !standing.order) return null;
-  const weeks = Object.keys(playoffWeeks).map(Number).sort((a,b)=>a-b);
-  if(!weeks.length) return null;
-  const mus = playoffWeeks[weeks[weeks.length-1]];
-  const byId = {};
-  mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
-  const champKey = standing.order[0], runnerUpKey = standing.order[1];
-  for(const pair of Object.values(byId)){
-    if(pair.length < 2) continue;
-    const [a,b] = pair;
-    const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
-    if((ka===champKey && kb===runnerUpKey) || (kb===champKey && ka===runnerUpKey)){
-      const champEntry = ka===champKey ? a : b;
-      const runnerUpEntry = ka===champKey ? b : a;
-      return {champKey, runnerUpKey, champPts: getTeamComputedTotal(champEntry), runnerUpPts: getTeamComputedTotal(runnerUpEntry)};
-    }
+  if(!season || !bracket || !playoffWeeks) return null;
+
+  // p===1 is normally excluded by loadPlayoffData's filter only for p===3 (3rd place) —
+  // p===1 (championship) is intentionally kept, so look for it directly here.
+  let champMatch = bracket.find(b => b.p === 1);
+  if(!champMatch){
+    // Some seasons' bracket data may not tag p===1 explicitly; fall back to the
+    // single final-round match if there's exactly one.
+    const maxRound = Math.max(...bracket.map(b => b.r));
+    const finalRoundMatches = bracket.filter(b => b.r === maxRound);
+    if(finalRoundMatches.length === 1) champMatch = finalRoundMatches[0];
   }
-  return null;
+  if(!champMatch) return null;
+
+  const week = season.playoffWeekStart + champMatch.r - 1;
+  const mus = playoffWeeks[week] || [];
+  const e1 = mus.find(m => m.roster_id === champMatch.t1);
+  const e2 = mus.find(m => m.roster_id === champMatch.t2);
+  if(!e1 || !e2) return null;
+
+  const k1 = season.rosterIdToManagerKey[champMatch.t1], k2 = season.rosterIdToManagerKey[champMatch.t2];
+  const champKey = champMatch.w === champMatch.t1 ? k1 : k2;
+  const runnerUpKey = champMatch.w === champMatch.t1 ? k2 : k1;
+  const champPts = champMatch.w === champMatch.t1 ? getTeamComputedTotal(e1) : getTeamComputedTotal(e2);
+  const runnerUpPts = champMatch.w === champMatch.t1 ? getTeamComputedTotal(e2) : getTeamComputedTotal(e1);
+  return {champKey, runnerUpKey, champPts, runnerUpPts};
 }
 
 function renderLeagueTimeline(){
@@ -2930,12 +2952,11 @@ function renderLeagueTradesList(){
    ============================================================ */
 /* ============================================================
    PLAYOFFS
-   Built from DB.playoffMatchupsByWeek (already loaded, separate from the
-   regular-season-only DB.allStarters pipeline) plus FINAL_STANDINGS.order.
-   Championship/3rd-place games are identified by matching each matchup's two
-   participants against the hand-verified final order — more reliable than
-   parsing Sleeper's bracket-advancement API, and it doubles as a correctness
-   check: if the data disagreed, the labels simply wouldn't line up.
+   Built from DB.playoffBrackets (Sleeper's winners_bracket, authoritative — see
+   loadPlayoffData) plus DB.playoffMatchupsByWeek for actual scores. Seeds are derived
+   from each bracket participant's regular-season record (best record among playoff
+   qualifiers = 1 seed), since Sleeper's bracket entries don't carry a seed number
+   directly. Losers bracket and 3rd-place games are excluded per league rules.
    ============================================================ */
 function computeAllTimePlayoffStandings(){
   const agg = {};
@@ -2945,13 +2966,13 @@ function computeAllTimePlayoffStandings(){
     const year = Number(yr);
     if(!f.order) return;
     const season = DB.seasons[year];
-    const playoffWeeks = DB.playoffMatchupsByWeek[year] || {};
+    const bracket = DB.playoffBrackets[year] || [];
     const madePlayoffs = new Set();
-    Object.values(playoffWeeks).forEach(mus => {
-      mus.forEach(m => {
-        const mk = season ? season.rosterIdToManagerKey[m.roster_id] : null;
-        if(mk) madePlayoffs.add(mk);
-      });
+    bracket.forEach(b => {
+      const k1 = season ? season.rosterIdToManagerKey[b.t1] : null;
+      const k2 = season ? season.rosterIdToManagerKey[b.t2] : null;
+      if(k1) madePlayoffs.add(k1);
+      if(k2) madePlayoffs.add(k2);
     });
     madePlayoffs.forEach(k => { if(agg[k]) agg[k].appearances++; });
     if(f.order[0] && agg[f.order[0]]) agg[f.order[0]].championships++;
@@ -2989,67 +3010,76 @@ function renderPlayoffsPanel(){
   renderPlayoffsFor(defaultYear);
 }
 
+// Seed = rank among ONLY the teams that actually appear in the bracket, by regular-season
+// wins/PF — not rank among all 12 teams, since seed 1 belongs to the best playoff
+// qualifier specifically.
+function computePlayoffSeeds(year, bracket){
+  const season = DB.seasons[year];
+  const rosterIds = new Set();
+  bracket.forEach(b => { rosterIds.add(b.t1); rosterIds.add(b.t2); });
+  const participants = [...rosterIds].map(rid => {
+    const team = (season.teams || []).find(t => t.rosterId === rid);
+    return {rosterId: rid, wins: team ? team.wins : 0, pf: team ? team.pf : 0};
+  });
+  participants.sort((a,b) => b.wins-a.wins || b.pf-a.pf);
+  const seedMap = {};
+  participants.forEach((p,i) => { seedMap[p.rosterId] = i+1; });
+  return seedMap;
+}
+
 function renderPlayoffsFor(year){
   const el = document.getElementById('playoffs-detail');
   const season = DB.seasons[year];
+  const bracket = DB.playoffBrackets[year];
   const playoffWeeks = DB.playoffMatchupsByWeek[year];
-  if(!season || !playoffWeeks || !Object.keys(playoffWeeks).length){
-    el.innerHTML = `<div class="empty-state"><i class="ti ti-tournament"></i>No playoff data loaded for ${seasonLabel(year)}.</div>`;
+  if(!season || !bracket || !bracket.length){
+    el.innerHTML = `<div class="empty-state"><i class="ti ti-tournament"></i>No playoff bracket data loaded for ${seasonLabel(year)}.</div>`;
     return;
   }
-  const weeks = Object.keys(playoffWeeks).map(Number).sort((a,b)=>a-b);
-  const standing = FINAL_STANDINGS[year];
-  const orderPos = {};
-  if(standing && standing.order) standing.order.forEach((k,i) => { orderPos[k] = i+1; });
+  const seedMap = computePlayoffSeeds(year, bracket);
+  const rounds = [...new Set(bracket.map(b => b.r))].sort((a,b) => a-b);
+  const maxRound = rounds[rounds.length-1];
 
-  const roundLabel = (idx) => {
-    const fromEnd = weeks.length - idx - 1;
-    if(fromEnd === 0) return 'Championship Week';
+  const roundLabel = (r) => {
+    const fromEnd = maxRound - r;
+    if(fromEnd === 0) return '\u{1F3C6} Championship';
     if(fromEnd === 1) return 'Semifinals';
     if(fromEnd === 2) return 'Quarterfinals';
-    return `Round ${idx+1}`;
+    return `Round ${r}`;
   };
 
-  let html = '';
-  weeks.forEach((w, idx) => {
-    const mus = playoffWeeks[w];
-    const byId = {};
-    mus.forEach(m => { (byId[m.matchup_id] = byId[m.matchup_id] || []).push(m); });
-    const pairs = Object.values(byId).filter(p => p.length >= 2);
-    if(!pairs.length) return;
+  const getScore = (r, rosterId) => {
+    const week = season.playoffWeekStart + r - 1;
+    const mus = (playoffWeeks && playoffWeeks[week]) || [];
+    const entry = mus.find(m => m.roster_id === rosterId);
+    return entry ? getTeamComputedTotal(entry) : null;
+  };
 
-    html += `<h3 style="margin:20px 0 12px;">${roundLabel(idx)} <span style="color:var(--text-faint);font-weight:400;font-size:12px;">(Week ${w})</span></h3><div class="card-grid">`;
-    pairs.forEach(pair => {
-      const [a,b] = pair;
-      const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
-      const pa = getTeamComputedTotal(a), pb = getTeamComputedTotal(b);
-      const aWon = pa >= pb;
-      const posA = orderPos[ka], posB = orderPos[kb];
-      let gameLabel = '';
-      if(posA && posB){
-        const lo = Math.min(posA,posB), hi = Math.max(posA,posB);
-        if(lo===1 && hi===2) gameLabel = '\u{1F3C6} Championship';
-        else if(lo===3 && hi===4) gameLabel = '3rd Place Game';
-      }
-      html += `<div class="card">
-        ${gameLabel ? `<div style="color:var(--gold);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">${gameLabel}</div>` : ''}
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <div style="${aWon?'font-weight:700;':''}">
-            <div style="font-size:12.5px;">${(getManager(ka)||{}).name||ka}</div>
-            <div style="font-family:var(--font-mono);font-size:17px;">${fmtNum(pa)}</div>
-          </div>
-          <div style="color:var(--text-faint);font-size:11px;">vs</div>
-          <div style="text-align:right;${!aWon?'font-weight:700;':''}">
-            <div style="font-size:12.5px;">${(getManager(kb)||{}).name||kb}</div>
-            <div style="font-family:var(--font-mono);font-size:17px;">${fmtNum(pb)}</div>
-          </div>
+  let html = `<div style="display:flex;gap:20px;overflow-x:auto;padding-bottom:12px;">`;
+  rounds.forEach(r => {
+    const matches = bracket.filter(b => b.r === r).sort((a,b) => (a.m||0)-(b.m||0));
+    html += `<div style="min-width:230px;flex-shrink:0;">
+      <div style="font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;font-weight:700;margin-bottom:10px;text-align:center;">${roundLabel(r)}</div>
+      <div style="display:flex;flex-direction:column;gap:16px;">`;
+    matches.forEach(b => {
+      const k1 = season.rosterIdToManagerKey[b.t1], k2 = season.rosterIdToManagerKey[b.t2];
+      const s1 = getScore(r, b.t1), s2 = getScore(r, b.t2);
+      html += `<div class="card" style="padding:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;${b.w===b.t1?'font-weight:700;':'color:var(--text-faint);'}">
+          <span><span style="color:var(--text-faint);font-size:11px;margin-right:6px;">#${seedMap[b.t1]||'?'}</span>${(getManager(k1)||{}).name||k1}</span>
+          <span style="font-family:var(--font-mono);">${s1!=null?fmtNum(s1):'—'}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;${b.w===b.t2?'font-weight:700;':'color:var(--text-faint);'}">
+          <span><span style="color:var(--text-faint);font-size:11px;margin-right:6px;">#${seedMap[b.t2]||'?'}</span>${(getManager(k2)||{}).name||k2}</span>
+          <span style="font-family:var(--font-mono);">${s2!=null?fmtNum(s2):'—'}</span>
         </div>
       </div>`;
     });
-    html += `</div>`;
+    html += `</div></div>`;
   });
+  html += `</div>`;
 
-  el.innerHTML = html || `<div class="empty-state"><i class="ti ti-tournament"></i>No playoff matchups found for ${seasonLabel(year)}.</div>`;
+  el.innerHTML = html;
 }
 
 function renderMatchupsPanel(){
