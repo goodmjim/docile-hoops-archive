@@ -569,7 +569,7 @@ const MANAGERS = {
   tlynn99:       {name:'Tyler',   years:[2022,2023,2024,2025,2026]},
   lanceesposito: {name:'Lance',   years:[2020,2021,2022]},
   sdenniso:      {name:'Stanley', years:[2023,2024]},
-  Dfletch22:     {name:'David',   years:[2025,2026]}
+  Dfletch22:     {name:'Fletch',  years:[2025,2026]}
 };
 
 // Sleeper username aliases -> canonical MANAGERS key. Resolve at user-fetch time.
@@ -1236,10 +1236,17 @@ function getManagerAvatarColor(managerKey){
   for(let i=0;i<key.length;i++){ hash = (hash*31 + key.charCodeAt(i)) & 0xffffffff; }
   return AVATAR_PALETTE[Math.abs(hash) % AVATAR_PALETTE.length];
 }
+// Explicit initials per manager (real first+last initials where known) — takes priority
+// over auto-deriving from the display name, which just grabbed the first two letters.
+const MANAGER_INITIALS = {
+  Goodmjim:'JG', DHalp:'DH', CarlCanary:'JL', boonefisher:'BF', bukkaabh:'AB',
+  JohnCarey:'JC', kellykyl:'KK', karpmcol:'HR', KennethGoulet:'DF', amol97:'AD',
+  lanceesposito:'LE', tlynn99:'TL', turkmommy:'JT', sdenniso:'SD', Dfletch22:'DF'
+};
 function renderManagerAvatar(managerKey, size=44){
   const m = getManager(managerKey);
   const name = m ? m.name : (managerKey || '?');
-  const initials = name.slice(0,2).toUpperCase();
+  const initials = MANAGER_INITIALS[managerKey] || name.slice(0,2).toUpperCase();
   const color = getManagerAvatarColor(managerKey);
   return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${color};display:flex;align-items:center;justify-content:center;font-weight:700;font-size:${Math.round(size*0.38)}px;color:#0b0d10;flex-shrink:0;">${initials}</div>`;
 }
@@ -2686,13 +2693,15 @@ function renderMyTimelineFor(managerKey){
         const isChamp = FINAL_STANDINGS[y] && FINAL_STANDINGS[y].champion === managerKey;
         return `<div class="timeline-item">
           <div class="timeline-dot ${isChamp?'champ':''}"></div>
-          <div class="card" ${isChamp?'style="border-color:rgba(216,176,74,0.3);"':''}>
+          <div class="card" style="${isChamp ? 'border-color:rgba(216,176,74,0.45);background:linear-gradient(135deg, rgba(216,176,74,0.12), var(--bg-panel) 65%);' : ''}">
             <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;">
               <div style="display:flex;align-items:baseline;gap:12px;">
-                <span style="font-family:var(--font-display);font-weight:700;font-size:19px;">${seasonLabel(y)}</span>
-                <span style="color:var(--text-dim);font-size:13px;">${getTeamName(managerKey,y)}</span>
+                <span style="font-family:var(--font-display);font-weight:700;font-size:19px;${isChamp?'color:var(--gold);':''}">${seasonLabel(y)}</span>
+                <span style="color:var(--text);font-size:13.5px;">${getTeamName(managerKey,y)}</span>
               </div>
-              ${isChamp ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : `<span style="font-size:12px;color:var(--text-dim);">${finish}</span>`}
+              ${isChamp
+                ? `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--gold);color:#241a04;padding:5px 13px;border-radius:999px;font-weight:700;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase;box-shadow:0 0 0 1px rgba(216,176,74,0.5), 0 3px 12px rgba(216,176,74,0.3);"><i class="ti ti-trophy" style="font-size:16px;"></i>Champion</span>`
+                : `<span style="font-size:12.5px;color:var(--text);font-weight:600;">${finish}</span>`}
             </div>
             <div style="display:flex;gap:22px;margin-top:10px;">
               <div><div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Record</div><div style="font-family:var(--font-mono);font-size:14px;">${record}</div></div>
