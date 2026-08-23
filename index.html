@@ -1781,6 +1781,68 @@ const RENDER_FNS = {
   search: renderSearch
 };
 
+/* ============================================================
+   STAT STRIP — floating stat boxes at the top of every Home/My Team/League
+   page, mirroring the football archive's pattern. Content varies by group:
+     Home:     Manager, My All-Time Record
+     My Team:  + My Points For, My Points Against, My Starts, My Players Used
+     League:   Manager, My All-Time Record, League Starts, League Players Used
+   (Search has no group, so it never gets a strip.) Record is shown as W-L only
+   — we don't track ties separately, and exact ties are vanishingly rare with
+   decimal scoring, so a third number isn't worth the added complexity.
+   ============================================================ */
+const STAT_TEAL = '#5fb8b0';
+
+function statBox(label, value, subtitle, valueColor){
+  return `<div class="card" style="padding:16px 18px;flex:1;min-width:150px;">
+    <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:6px;">${label}</div>
+    <div style="font-family:var(--font-display);font-weight:700;font-size:26px;color:${valueColor};line-height:1.1;">${value}</div>
+    <div style="font-size:12px;color:var(--text-faint);margin-top:4px;">${subtitle}</div>
+  </div>`;
+}
+
+function renderStatStrip(pageKey){
+  const page = PAGES[pageKey];
+  if(!page || !page.group) return;
+  const container = document.getElementById(`stat-strip-${pageKey}`);
+  if(!container) return;
+
+  const managerName = DB.myManagerKey ? (getManager(DB.myManagerKey)||{}).name : null;
+  const rec = DB.myManagerKey ? computeAllTimeManagerRecords()[DB.myManagerKey] : null;
+
+  const boxes = [
+    statBox('Manager', managerName || '—', 'Season Archive', 'var(--gold)')
+  ];
+
+  if(rec){
+    const games = rec.wins + rec.losses;
+    const pct = games ? Math.round(rec.wins/games*100) : 0;
+    boxes.push(statBox('My Record', `${rec.wins}\u2013${rec.losses}`, `${pct}% win rate`, 'var(--gold)'));
+  } else {
+    boxes.push(statBox('My Record', '—', 'sign in to see this', 'var(--gold)'));
+  }
+
+  if(page.group === 'myteam'){
+    const myStarters = DB.myManagerKey ? DB.allStarters.filter(s => s.managerKey === DB.myManagerKey) : [];
+    const games = rec ? (rec.wins+rec.losses) : 0;
+    const pf = rec ? rec.pf : 0, pa = rec ? rec.pa : 0;
+    const ppg = games ? (pf/games).toFixed(1) : '0.0';
+    const papg = games ? (pa/games).toFixed(1) : '0.0';
+    const uniquePlayers = new Set(myStarters.map(s=>s.pid)).size;
+    boxes.push(statBox('My Points For', fmtNum(pf,0), `${ppg} PPG`, 'var(--text)'));
+    boxes.push(statBox('My Points Against', fmtNum(pa,0), `${papg} PPG against`, 'var(--text)'));
+    boxes.push(statBox('My Starts', myStarters.length.toLocaleString(), 'all-time', STAT_TEAL));
+    boxes.push(statBox('My Players Used', uniquePlayers.toLocaleString(), 'unique \u00b7 all-time', STAT_TEAL));
+  } else if(page.group === 'league'){
+    const leagueStarts = DB.allStarters.length;
+    const leaguePlayers = new Set(DB.allStarters.map(s=>s.pid)).size;
+    boxes.push(statBox('League Starts', leagueStarts.toLocaleString(), 'all-time', 'var(--text)'));
+    boxes.push(statBox('League Players Used', leaguePlayers.toLocaleString(), 'unique \u00b7 all-time', STAT_TEAL));
+  }
+
+  container.innerHTML = `<div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:22px;">${boxes.join('')}</div>`;
+}
+
 function switchTab(name){
   const page = PAGES[name];
   if(!page) return;
@@ -1798,6 +1860,7 @@ function switchTab(name){
 
   if(page.group){ activeBottomGroup = page.group; }
   renderBottomSubrow();
+  renderStatStrip(name);
 
   if(RENDER_FNS[name]) RENDER_FNS[name]();
 }
@@ -1820,6 +1883,7 @@ function renderContentShell(){
         <h1>${p.label}</h1>
         <div class="desc">${p.desc}</div>
       </div>
+      ${PAGES[p.key] && PAGES[p.key].group ? `<div id="stat-strip-${p.key}"></div>` : ''}
       <div id="${p.key}-body">${p.ready ? '' : comingSoonHTML(p)}</div>
     </div>`).join('');
 }
