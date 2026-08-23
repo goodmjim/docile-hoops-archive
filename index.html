@@ -20,6 +20,8 @@
 <meta name="twitter:image" content="https://goodmjim.github.io/docile-hoops-archive/og_preview.png">
 
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@700&display=swap">
 <style>
 /* ============================================================
    DESIGN TOKENS
@@ -2659,46 +2661,47 @@ function renderMyTimelineFor(managerKey){
   if(!m){ el.innerHTML = `<div class="empty-state">Unknown manager.</div>`; return; }
   const years = m.years;
   el.innerHTML = `
-    <div class="card">
-      <h3>${m.name}</h3>
-      <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:10px;">Fellowship member ${seasonLabel(years[0])} – ${seasonLabel(years[years.length-1])}</div>
-      <div style="overflow-x:auto;">
-      <table class="data-table table-scroll-min">
-        <thead><tr><th>Season</th><th>Team Name</th><th>Record</th><th>PF</th><th>PA</th><th>Finish</th><th></th></tr></thead>
-        <tbody>
-          ${years.map(y => {
-            const season = DB.seasons[y];
-            const team = season ? (season.teams||[]).find(t => t.managerKey === managerKey) : null;
-            let record = '—', pf = '—', pa = '—', finish = '—';
-            if(team){
-              record = `${team.wins}\u2013${team.losses}`;
-              pf = fmtNum(team.pf,0);
-              pa = fmtNum(team.pa,0);
-            }
-            // Prefer the real (playoff-inclusive) order of finish when we have it —
-            // more accurate than reconstructing rank from regular-season games alone.
-            if(FINAL_STANDINGS[y] && FINAL_STANDINGS[y].order){
-              const pos = FINAL_STANDINGS[y].order.indexOf(managerKey);
-              if(pos !== -1) finish = `#${pos+1} of ${FINAL_STANDINGS[y].order.length}`;
-            } else if(team){
-              const ranked = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
-              const rank = ranked.findIndex(t => t.managerKey === managerKey) + 1;
-              if(rank > 0) finish = `#${rank} of ${ranked.length}`;
-            }
-            const isChamp = FINAL_STANDINGS[y] && FINAL_STANDINGS[y].champion === managerKey;
-            return `<tr>
-              <td>${seasonLabel(y)}</td>
-              <td>${getTeamName(managerKey,y)}</td>
-              <td style="font-family:var(--font-mono);">${record}</td>
-              <td style="font-family:var(--font-mono);">${pf}</td>
-              <td style="font-family:var(--font-mono);">${pa}</td>
-              <td style="white-space:nowrap;">${finish}</td>
-              <td>${isChamp ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : ''}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>
-      </div>
+    <h3 style="margin-bottom:2px;">${m.name}</h3>
+    <div style="color:var(--text-dim);font-size:12.5px;margin-bottom:16px;">Fellowship member ${seasonLabel(years[0])} – ${seasonLabel(years[years.length-1])}</div>
+    <div class="timeline-rail">
+      ${years.map(y => {
+        const season = DB.seasons[y];
+        const team = season ? (season.teams||[]).find(t => t.managerKey === managerKey) : null;
+        let record = '—', pf = '—', pa = '—', finish = '—';
+        if(team){
+          record = `${team.wins}\u2013${team.losses}`;
+          pf = fmtNum(team.pf,0);
+          pa = fmtNum(team.pa,0);
+        }
+        // Prefer the real (playoff-inclusive) order of finish when we have it —
+        // more accurate than reconstructing rank from regular-season games alone.
+        if(FINAL_STANDINGS[y] && FINAL_STANDINGS[y].order){
+          const pos = FINAL_STANDINGS[y].order.indexOf(managerKey);
+          if(pos !== -1) finish = `#${pos+1} of ${FINAL_STANDINGS[y].order.length}`;
+        } else if(team){
+          const ranked = [...(season.teams||[])].sort((a,b) => b.wins-a.wins || b.pf-a.pf);
+          const rank = ranked.findIndex(t => t.managerKey === managerKey) + 1;
+          if(rank > 0) finish = `#${rank} of ${ranked.length}`;
+        }
+        const isChamp = FINAL_STANDINGS[y] && FINAL_STANDINGS[y].champion === managerKey;
+        return `<div class="timeline-item">
+          <div class="timeline-dot ${isChamp?'champ':''}"></div>
+          <div class="card" ${isChamp?'style="border-color:rgba(216,176,74,0.3);"':''}>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+              <div style="display:flex;align-items:baseline;gap:12px;">
+                <span style="font-family:var(--font-display);font-weight:700;font-size:19px;">${seasonLabel(y)}</span>
+                <span style="color:var(--text-dim);font-size:13px;">${getTeamName(managerKey,y)}</span>
+              </div>
+              ${isChamp ? `<span class="trophy-chip"><i class="ti ti-trophy"></i>Champion</span>` : `<span style="font-size:12px;color:var(--text-dim);">${finish}</span>`}
+            </div>
+            <div style="display:flex;gap:22px;margin-top:10px;">
+              <div><div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">Record</div><div style="font-family:var(--font-mono);font-size:14px;">${record}</div></div>
+              <div><div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">PF</div><div style="font-family:var(--font-mono);font-size:14px;">${pf}</div></div>
+              <div><div style="font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px;">PA</div><div style="font-family:var(--font-mono);font-size:14px;">${pa}</div></div>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
     </div>
   `;
 }
@@ -2717,15 +2720,16 @@ function renderStandings(){
     <div class="card" style="margin-bottom:16px;">
       <h3>All-Time Standings</h3>
       <div style="overflow-x:auto;">
-        <table class="data-table table-scroll-min">
+        <table class="data-table table-scroll-min" style="border-collapse:collapse;">
           <thead><tr>
+            <th style="cursor:default;width:24px;"></th>
             <th style="cursor:default;">Manager</th>
-            <th onclick="sortStandingsTable('wins')">W\u2013L</th>
-            <th onclick="sortStandingsTable('pct')">Win %</th>
-            <th onclick="sortStandingsTable('pf')">PF</th>
-            <th onclick="sortStandingsTable('pa')">PA</th>
-            <th onclick="sortStandingsTable('titles')">Titles</th>
-            <th style="cursor:default;" title="All-time standings rank change vs. the most recently loaded week (regular season only)">vs Last Wk</th>
+            <th onclick="sortStandingsTable('wins')" style="text-align:right;">W\u2013L</th>
+            <th onclick="sortStandingsTable('pct')" style="text-align:right;">Win %</th>
+            <th onclick="sortStandingsTable('pf')" style="text-align:right;">PF</th>
+            <th onclick="sortStandingsTable('pa')" style="text-align:right;">PA</th>
+            <th onclick="sortStandingsTable('titles')" style="text-align:right;">Titles</th>
+            <th style="cursor:default;text-align:right;" title="All-time standings rank change vs. the most recently loaded week (regular season only)">vs Last Wk</th>
           </tr></thead>
           <tbody id="standings-table-body"></tbody>
         </table>
@@ -2769,15 +2773,20 @@ function renderStandingsTableBody(){
   rows.sort((a,b) => (sf[standingsSort.col] || sf.wins)(a,b) || (b.pf-a.pf));
 
   const deltas = computeStandingsRankDeltas();
+  const maxPf = Math.max(...rows.map(r => r.pf), 1);
 
   body.innerHTML = rows.map((r,i) => `<tr ${r.k===DB.myManagerKey?'style="font-weight:700;"':''}>
-    <td>${i+1}. ${(getManager(r.k)||{}).name || r.k}</td>
-    <td style="font-family:var(--font-mono);">${r.wins}\u2013${r.losses}</td>
-    <td style="font-family:var(--font-mono);">${(r.pct*100).toFixed(0)}%</td>
-    <td style="font-family:var(--font-mono);">${fmtNum(r.pf,0)}</td>
-    <td style="font-family:var(--font-mono);">${fmtNum(r.pa,0)}</td>
-    <td style="font-family:var(--font-mono);">${r.titles || '—'}</td>
-    <td>${renderRankDeltaCell(deltas[r.k])}</td>
+    <td style="font-family:var(--font-display);font-weight:700;font-size:15px;color:${i<3?'var(--gold)':'var(--text-faint)'};">${i+1}</td>
+    <td><div style="display:flex;align-items:center;gap:10px;">${renderManagerAvatar(r.k,28)}<span style="font-weight:600;font-size:13.5px;">${(getManager(r.k)||{}).name || r.k}</span></div></td>
+    <td style="font-family:var(--font-mono);text-align:right;">${r.wins}\u2013${r.losses}</td>
+    <td style="font-family:var(--font-mono);text-align:right;">${(r.pct*100).toFixed(0)}%</td>
+    <td style="font-family:var(--font-mono);text-align:right;position:relative;">
+      ${fmtNum(r.pf,0)}
+      <div style="position:absolute;left:8px;right:8px;bottom:2px;height:3px;background:var(--bg-hover);border-radius:2px;"><div style="height:100%;width:${(r.pf/maxPf*100).toFixed(0)}%;background:var(--accent);border-radius:2px;"></div></div>
+    </td>
+    <td style="font-family:var(--font-mono);text-align:right;color:var(--text-dim);">${fmtNum(r.pa,0)}</td>
+    <td style="font-family:var(--font-mono);text-align:right;color:var(--gold);">${r.titles || '—'}</td>
+    <td style="text-align:right;">${renderRankDeltaCell(deltas[r.k])}</td>
   </tr>`).join('');
 }
 
