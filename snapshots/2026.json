@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "exported": "2026-08-26T19:48:51.210Z",
+  "year": 2026,
+  "leagueId": "1372269741191733248",
+  "leagueName": "Docile Basketball Fellowship",
+  "teams": [
+    {
+      "rosterId": 1,
+      "managerKey": "Goodmjim",
+      "name": "Queen Latifahs Last Stand",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 2,
+      "managerKey": "boonefisher",
+      "name": "The Rude Boys",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 3,
+      "managerKey": "amol97",
+      "name": "Team amol97",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 4,
+      "managerKey": "kellykyl",
+      "name": "The Sting Slayer",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 5,
+      "managerKey": "CarlCanary",
+      "name": "Sharketball",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 6,
+      "managerKey": "KennethGoulet",
+      "name": "Big Baller Brand",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 7,
+      "managerKey": "karpmcol",
+      "name": "Yakima Fighting Cuckolds",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 8,
+      "managerKey": "bukkaabh",
+      "name": "Team Bukkapatnam",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 9,
+      "managerKey": "tlynn99",
+      "name": "Team Jew",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 10,
+      "managerKey": "Dfletch22",
+      "name": "Under New Management",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 11,
+      "managerKey": "JohnCarey",
+      "name": "Pass the Bol",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    },
+    {
+      "rosterId": 12,
+      "managerKey": "DHalp",
+      "name": "Declan Farmer FC",
+      "wins": 0,
+      "losses": 0,
+      "pf": 0,
+      "pa": 0
+    }
+  ],
+  "rosterIdToManagerKey": {
+    "1": "Goodmjim",
+    "2": "boonefisher",
+    "3": "amol97",
+    "4": "kellykyl",
+    "5": "CarlCanary",
+    "6": "KennethGoulet",
+    "7": "karpmcol",
+    "8": "bukkaabh",
+    "9": "tlynn99",
+    "10": "Dfletch22",
+    "11": "JohnCarey",
+    "12": "DHalp"
+  },
+  "playoffWeekStart": 22,
+  "matchupsByWeek": {},
+  "playoffMatchupsByWeek": {},
+  "playoffBracket": [],
+  "starters": [],
+  "trades": [],
+  "draftPicks": {
+    "startup": [],
+    "rookie": []
+  }
+}
