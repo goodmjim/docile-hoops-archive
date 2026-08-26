@@ -4609,9 +4609,21 @@ function openPlayerModal(pid){
   const acq = getPlayerAcquisition(pid);
   const trades = DB.transactions.filter(t => Object.keys(t.adds||{}).includes(pid)).sort((a,b) => b.year-a.year || b.week-a.week);
 
+  const ringColor = primaryPos && POSITION_COLORS[primaryPos] ? `var(${POSITION_COLORS[primaryPos]})` : 'var(--border)';
+
   content.innerHTML = `
-    <h2 style="margin-bottom:2px;text-transform:uppercase;">${meta.name}</h2>
-    <div style="color:var(--accent);font-size:12.5px;font-weight:600;margin-bottom:16px;">${primaryPos||'—'} \u00b7 ${meta.teamAbbr||'FA'}</div>
+    <div style="display:flex;gap:14px;align-items:center;margin-bottom:16px;">
+      <img src="https://sleepercdn.com/content/nba/players/${pid}.jpg" alt=""
+        onerror="this.style.display='none'; var fb=this.nextElementSibling; if(fb) fb.style.display='flex';"
+        style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid ${ringColor};flex-shrink:0;background:var(--bg-hover);">
+      <div style="display:none;width:64px;height:64px;border-radius:50%;background:var(--bg-hover);align-items:center;justify-content:center;flex-shrink:0;border:2px solid ${ringColor};">
+        <i class="ti ti-user" style="font-size:26px;color:var(--text-faint);"></i>
+      </div>
+      <div>
+        <h2 style="margin-bottom:2px;text-transform:uppercase;">${meta.name}</h2>
+        <div style="color:var(--accent);font-size:12.5px;font-weight:600;">${primaryPos||'—'} \u00b7 ${meta.teamAbbr||'FA'}</div>
+      </div>
+    </div>
 
     <div style="font-size:11px;color:var(--text-faint);font-family:var(--font-mono);margin-bottom:16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
       <span>Sleeper ID: <span style="color:var(--text-dim);">${pid}</span></span>
