@@ -4767,19 +4767,25 @@ async function loadAllData(onProgress = () => {}){
   await loadAllDraftPicks();
   await loadStartupDraft();
 
-  // Phase 2: load each season live from Sleeper; apply its snapshot afterward either
-  // way — as a gap-filler on success, or as the full fallback if the live load failed.
+  // Phase 2: snapshot-first for completed seasons. If we already have a GitHub
+  // snapshot, trust it as the stable source of truth — completed seasons shouldn't
+  // be moving targets, and Sleeper's live data has proven capable of drifting even
+  // for seasons long over (see: the Vucevic/Tatum and Jimmy/Kyle investigations).
+  // Live Sleeper is only fetched when no snapshot exists yet for that season.
+  // Re-export a snapshot whenever you deliberately want to refresh a season's numbers.
   for(let i=0; i<years.length; i++){
     const y = years[i];
-    onProgress(55 + Math.round((i/years.length)*40), `Loading ${seasonLabel(y)} scoring… (${i+1}/${years.length})`);
-    try{
-      await loadSeasonScoring(y);
-      await loadTransactions(y);
-      await loadPlayoffData(y);
-      if(snapshots[y]) applySnapshot(snapshots[y], y);
-    }catch(e){
-      console.warn(`[Archive] Live load failed for ${seasonLabel(y)}:`, e.message);
-      if(snapshots[y]) applySnapshot(snapshots[y], y);
+    onProgress(55 + Math.round((i/years.length)*40), `Loading ${seasonLabel(y)}… (${i+1}/${years.length})`);
+    if(snapshots[y]){
+      applySnapshot(snapshots[y], y);
+    } else {
+      try{
+        await loadSeasonScoring(y);
+        await loadTransactions(y);
+        await loadPlayoffData(y);
+      }catch(e){
+        console.warn(`[Archive] Live load failed for ${seasonLabel(y)} (no snapshot available either):`, e.message);
+      }
     }
     buildHonorsForYear(y);
   }
