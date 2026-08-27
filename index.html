@@ -762,7 +762,21 @@ function buildAllDocileTeams(year){
 // year's rookie draft (ROOKIE_DRAFT_IDS[year]). This is a proxy for actual NBA rookie
 // status — accurate for the vast majority of cases, but a late draft-and-stash pick who
 // debuts a year after being drafted would be misattributed. Flag if that needs refining.
+//
+// The startup season (2020) has no rookie draft to use as a proxy — the startup draft
+// mixes rookies and veterans together to build initial rosters. Instead, we check each
+// startup pick's own metadata.years_exp: Sleeper's draft-pick metadata is a snapshot
+// FROZEN at the moment that specific draft happened, not live/current data — so
+// years_exp==='0' there means the player genuinely was a rookie for the 2020-21 season,
+// not that they're "currently" a rookie (which would be wrong for a 2020 pick by now).
 function getRookiePidsForYear(year){
+  if(year === FIRST_SEASON){
+    return new Set(
+      (DB.startupDraftPicks || [])
+        .filter(p => p.metadata && String(p.metadata.years_exp) === '0')
+        .map(p => p.player_id)
+    );
+  }
   const picks = DB.draftPicks[year] || [];
   return new Set(picks.map(p => p.player_id));
 }
