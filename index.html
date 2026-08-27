@@ -705,7 +705,6 @@ function computePotgData(yearFilter='all'){
    Season totals = sum of STARTER points only, regular season only.
    ============================================================ */
 const FLEX_FILL_ORDER = ['C','PF','SF','PG','SG','F','G','UTIL','UTIL','UTIL'];
-const ROOKIE_FILL_ORDER = ['C','PF','SF','PG','SG'];
 
 // Aggregates lineup points per player for a season — mirrors the football archive's
 // renderPlayers() aggregation, filtering the flat DB.allStarters array by year rather
@@ -771,20 +770,18 @@ function getRookiePidsForYear(year){
 function buildAllRookieTeam(year){
   const totals = computeSeasonTotals(year);
   const rookiePids = getRookiePidsForYear(year);
-  let pool = Object.keys(totals)
+  const pool = Object.keys(totals)
     .filter(pid => totals[pid] > 0 && rookiePids.has(pid))
-    .sort((a,b) => totals[b]-totals[a]);
+    .sort((a,b) => totals[b]-totals[a])
+    .slice(0, 5);
 
-  // Only one All-Rookie team is honored (unlike All-Docile's three tiers) —
-  // rookie classes are too shallow to support meaningful 2nd/3rd teams.
-  const roster = [];
-  ROOKIE_FILL_ORDER.forEach(slot => {
-    const idx = pool.findIndex(pid => isEligibleForSlot(pid, slot, year));
-    if(idx === -1){ roster.push({slot, pid:null, points:0}); return; }
-    const pid = pool[idx];
-    roster.push({slot, pid, points:totals[pid], resolvedPosition:slot});
-    pool.splice(idx,1);
-  });
+  // Just the top 5 rookies by season points, no position requirements — unlike
+  // All-Docile, there's no slot to fill, so position is shown for reference only.
+  const roster = pool.map(pid => ({
+    pid,
+    points: totals[pid],
+    positions: getPlayerPositions(pid, year)
+  }));
   const teams = {1: roster};
   DB.awards.allRookie[year] = teams;
   return teams;
@@ -4069,7 +4066,7 @@ function renderDraftFor(year){
 
 function renderHonorsRoster(roster, year){
   // Reorders for DISPLAY only (conventional reading order) — the underlying
-  // scarcity-fill selection order (FLEX_FILL_ORDER/ROOKIE_FILL_ORDER) is unchanged.
+  // scarcity-fill selection order (FLEX_FILL_ORDER) is unchanged.
   const displayRoster = [...roster].sort((a,b) => LINEUP_SLOTS.indexOf(a.slot) - LINEUP_SLOTS.indexOf(b.slot));
   return `<table class="data-table">
     <thead><tr><th>Slot</th><th>Player</th><th>Pos</th><th>Lineup Pts</th></tr></thead>
@@ -4078,6 +4075,22 @@ function renderHonorsRoster(roster, year){
       <td>${r.pid ? `<span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name || r.pid}</span>` : '<span style="color:var(--text-faint);">— unfilled —</span>'}</td>
       <td>${r.pid ? renderSlotBadge(r.resolvedPosition, r.slot) : ''}</td>
       <td>${r.points ? fmtNum(r.points) : '—'}</td>
+    </tr>`).join('')}</tbody>
+  </table>`;
+}
+
+// All-Rookie has no position slots to fill (just the top 5 by points), so this shows
+// rank instead of slot, and each player's real position badge instead of a resolved
+// single-slot letter.
+function renderRookieRoster(roster){
+  if(!roster.length) return `<div class="empty-state" style="padding:16px;"><i class="ti ti-medal"></i>No rookie data for this season.</div>`;
+  return `<table class="data-table">
+    <thead><tr><th>#</th><th>Player</th><th>Pos</th><th>Lineup Pts</th></tr></thead>
+    <tbody>${roster.map((r,i) => `<tr>
+      <td>${i+1}</td>
+      <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name || r.pid}</span></td>
+      <td>${renderPositionBadge(r.positions)}</td>
+      <td>${fmtNum(r.points)}</td>
     </tr>`).join('')}</tbody>
   </table>`;
 }
@@ -4104,7 +4117,7 @@ function renderAwardsFor(year){
       ${[1,2,3].map(t => `<div class="card"><h4 style="margin-bottom:10px;">${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(docile[t], year)}</div>`).join('')}
     </div>
     <h3 style="margin-bottom:14px;">All-Rookie Team — ${seasonLabel(year)}</h3>
-    <div class="card">${renderHonorsRoster((rookie && rookie[1]) || [], year)}</div>
+    <div class="card">${renderRookieRoster((rookie && rookie[1]) || [])}</div>
   `;
 }
 
