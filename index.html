@@ -627,12 +627,12 @@ const FINAL_STANDINGS = {
 // Winner names get resolved to Sleeper player IDs lazily via resolveIndividualAwardPids()
 // (below, near the player-card helpers) so they're clickable and show up on player cards.
 const INDIVIDUAL_AWARDS = {
-  2020:{mvp:'Nikola Jokic', finalsMvp:'Nikola Jokic', roty:'LaMelo Ball'},
-  2021:{mvp:'Giannis Antetokounmpo', finalsMvp:'Nikola Jokic', roty:'Evan Mobley'},
-  2022:{mvp:'Nikola Jokic', finalsMvp:'Jayson Tatum', roty:'Paolo Banchero'},
-  2023:{mvp:'Luka Doncic', finalsMvp:'Jalen Brunson', roty:'Victor Wembanyama'},
-  2024:{mvp:'Nikola Jokic', finalsMvp:'Stephen Curry', roty:'Zach Edey'},
-  2025:{mvp:'Nikola Jokic', finalsMvp:'James Harden', roty:'Cooper Flagg'}
+  2020:{mvp:'Nikola Jokić', finalsMvp:'Nikola Jokić', roty:'LaMelo Ball'},
+  2021:{mvp:'Giannis Antetokounmpo', finalsMvp:'Nikola Jokić', roty:'Evan Mobley'},
+  2022:{mvp:'Nikola Jokić', finalsMvp:'Jayson Tatum', roty:'Paolo Banchero'},
+  2023:{mvp:'Luka Dončić', finalsMvp:'Jalen Brunson', roty:'Victor Wembanyama'},
+  2024:{mvp:'Nikola Jokić', finalsMvp:'Stephen Curry', roty:'Zach Edey'},
+  2025:{mvp:'Nikola Jokić', finalsMvp:'James Harden', roty:'Cooper Flagg'}
 };
 
 /* ============================================================
@@ -1667,7 +1667,9 @@ const PID_OVERRIDES = {
 };
 
 function normalizeNameForMatch(s){
-  return (s||'').toLowerCase().replace(/[.'-]/g,'').replace(/\s+jr$|\s+sr$|\s+iii$|\s+ii$|\s+iv$/,'').trim();
+  return (s||'')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // strip accents (Jokić->Jokic, Dončić->Doncic, etc.)
+    .toLowerCase().replace(/[.'-]/g,'').replace(/\s+jr$|\s+sr$|\s+iii$|\s+ii$|\s+iv$/,'').trim();
 }
 
 function buildPlayerNameMap(){
