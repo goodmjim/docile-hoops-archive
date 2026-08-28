@@ -4456,7 +4456,7 @@ function buildLeagueContext(){
       });
     });
 
-    lines.push('\nPLAYER PERFORMANCE BY OPPONENT (top 30 most-started players):');
+    lines.push('\nPLAYER PERFORMANCE BY OPPONENT (top 80 most-started players):');
     const pidOpponent = {};
     Object.entries(DB.seasons).forEach(([yearStr, season]) => {
       const year = Number(yearStr);
@@ -4480,7 +4480,7 @@ function buildLeagueContext(){
         });
       });
     });
-    const topPids = Object.entries(pAgg).sort((a,b)=>b[1].starts-a[1].starts).slice(0,30).map(([pid])=>pid);
+    const topPids = Object.entries(pAgg).sort((a,b)=>b[1].starts-a[1].starts).slice(0,80).map(([pid])=>pid);
     topPids.forEach(pid => {
       const meta = DB.playerMeta[pid];
       const name = meta ? meta.name : `PID:${pid}`;
@@ -4494,6 +4494,50 @@ function buildLeagueContext(){
       });
       const summary = Object.entries(byOpp).map(([opp,d]) => `vs${opp}:${d.starts}st/${d.total.toFixed(0)}pts`).join(',');
       if(summary) lines.push(`  ${name}(${pos}): ${summary}`);
+    });
+
+    // Debut performances — each player's first-ever start, sorted by points.
+    // Answers "who scored the most in their debut" style questions.
+    lines.push('\nDEBUT PERFORMANCES (each player\'s first-ever start, sorted by points, top 20):');
+    const debutByPid = {};
+    DB.allStarters.forEach(s => {
+      const sortKey = s.year*100 + s.week;
+      if(!debutByPid[s.pid] || sortKey < debutByPid[s.pid].sortKey){
+        debutByPid[s.pid] = {sortKey, year:s.year, week:s.week, points:s.points, managerKey:s.managerKey};
+      }
+    });
+    Object.entries(debutByPid)
+      .map(([pid,d]) => ({pid, ...d}))
+      .sort((a,b) => (b.points||0)-(a.points||0))
+      .slice(0,20)
+      .forEach(d => {
+        const name = (DB.playerMeta[d.pid]||{}).name || `PID:${d.pid}`;
+        const mgrName = (getManager(d.managerKey)||{}).name || d.managerKey || '?';
+        lines.push(`  ${name}: ${fmtNum(d.points)} pts in debut (${seasonLabel(d.year)} Wk${d.week}, started by ${mgrName})`);
+      });
+
+    // Single-game highs — overall and per-manager. Answers "highest scoring
+    // performance" and "best games <manager> has gotten from a player" questions.
+    lines.push('\nSINGLE-GAME HIGHS (top 20 individual starter performances, all-time):');
+    [...DB.allStarters]
+      .sort((a,b) => (b.points||0)-(a.points||0))
+      .slice(0,20)
+      .forEach(s => {
+        const name = (DB.playerMeta[s.pid]||{}).name || `PID:${s.pid}`;
+        const mgrName = (getManager(s.managerKey)||{}).name || s.managerKey || '?';
+        lines.push(`  ${name}: ${fmtNum(s.points)} pts (${seasonLabel(s.year)} Wk${s.week}, started by ${mgrName})`);
+      });
+
+    lines.push('\nSINGLE-GAME HIGHS BY MANAGER (each manager\'s top 5 individual starter performances):');
+    Object.keys(MANAGERS).forEach(mk => {
+      const mgrGames = DB.allStarters.filter(s => s.managerKey === mk).sort((a,b) => (b.points||0)-(a.points||0)).slice(0,5);
+      if(!mgrGames.length) return;
+      const mgrName = (getManager(mk)||{}).name || mk;
+      const summary = mgrGames.map(s => {
+        const name = (DB.playerMeta[s.pid]||{}).name || `PID:${s.pid}`;
+        return `${name} ${fmtNum(s.points)}pts(${seasonLabel(s.year)}Wk${s.week})`;
+      }).join(', ');
+      lines.push(`  ${mgrName}: ${summary}`);
     });
   }
 
@@ -4734,6 +4778,29 @@ function computePlayerAwards(pid){
 /* ============================================================
    PLAYER MODAL
    ============================================================ */
+// Finds the opposing manager for a specific game (year/week/rosterId), by looking up
+// the matchup pairing directly — DB.allStarters entries don't carry opponent info
+// themselves, so this cross-references season.matchupsByWeek on demand.
+function getOpponentManagerForGame(year, week, rosterId){
+  const season = DB.seasons[year];
+  if(!season || !season.matchupsByWeek || !season.matchupsByWeek[week]) return null;
+  const mus = season.matchupsByWeek[week];
+  const mine = mus.find(m => m.roster_id === rosterId);
+  if(!mine) return null;
+  const opp = mus.find(m => m.matchup_id === mine.matchup_id && m.roster_id !== rosterId);
+  if(!opp) return null;
+  return season.rosterIdToManagerKey[opp.roster_id];
+}
+
+function toggleGameLog(rowId, chevronId){
+  const row = document.getElementById(rowId);
+  const chevron = document.getElementById(chevronId);
+  if(!row) return;
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? 'table-row' : 'none';
+  if(chevron) chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
 function openPlayerModal(pid){
   const meta = DB.playerMeta[pid];
   if(!meta) return;
@@ -4856,16 +4923,44 @@ function openPlayerModal(pid){
     </div>` : ''}
 
     <div>
-      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Season Breakdown</div>
+      <div style="font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Season Breakdown <span style="text-transform:none;color:var(--text-faint);">(click a row for the game log)</span></div>
       <table class="data-table">
         <thead><tr><th>Season</th><th>Starts</th><th>Total</th><th>Avg</th><th>Manager(s)</th></tr></thead>
-        <tbody>${Object.entries(bySeason).sort((a,b) => b[0]-a[0]).map(([yr,d]) => `<tr>
-          <td>${seasonLabel(Number(yr))}</td>
-          <td>${d.starts}</td>
-          <td>${fmtNum(d.pts)}</td>
-          <td>${fmtNum(d.pts/d.starts)}</td>
-          <td style="font-size:11.5px;color:var(--text-dim);">${[...d.managers].join(', ')}</td>
-        </tr>`).join('')}</tbody>
+        <tbody>${Object.entries(bySeason).sort((a,b) => b[0]-a[0]).map(([yr,d]) => {
+          const year = Number(yr);
+          const logId = `gamelog-${pid}-${year}`;
+          const chevronId = `chevron-${pid}-${year}`;
+          const games = all.filter(s => s.year === year).sort((a,b) => a.week-b.week);
+          return `<tr style="cursor:pointer;" onclick="toggleGameLog('${logId}','${chevronId}')">
+            <td><i id="${chevronId}" class="ti ti-chevron-right" style="font-size:12px;margin-right:5px;color:var(--text-faint);display:inline-block;transition:transform .15s;"></i>${seasonLabel(year)}</td>
+            <td>${d.starts}</td>
+            <td>${fmtNum(d.pts)}</td>
+            <td>${fmtNum(d.pts/d.starts)}</td>
+            <td style="font-size:11.5px;color:var(--text-dim);">${[...d.managers].join(', ')}</td>
+          </tr>
+          <tr id="${logId}" style="display:none;">
+            <td colspan="5" style="padding:0;background:var(--bg-hover);">
+              <table style="width:100%;font-size:12px;border-collapse:collapse;">
+                <thead><tr style="color:var(--text-faint);">
+                  <th style="padding:6px 12px;text-align:left;font-weight:600;">Week</th>
+                  <th style="padding:6px 12px;text-align:left;font-weight:600;">Points</th>
+                  <th style="padding:6px 12px;text-align:left;font-weight:600;">Opponent</th>
+                  <th style="padding:6px 12px;text-align:left;font-weight:600;">Started By</th>
+                </tr></thead>
+                <tbody>${games.map(g => {
+                  const oppKey = getOpponentManagerForGame(g.year, g.week, g.teamRosterId);
+                  const oppName = oppKey ? ((getManager(oppKey)||{}).name || oppKey) : '\u2014';
+                  return `<tr style="border-top:1px solid var(--border-soft);">
+                    <td style="padding:5px 12px;">Wk ${g.week}</td>
+                    <td style="padding:5px 12px;font-family:var(--font-mono);">${fmtNum(g.points)}</td>
+                    <td style="padding:5px 12px;">vs ${oppName}</td>
+                    <td style="padding:5px 12px;color:var(--text-dim);">${(getManager(g.managerKey)||{}).name || g.managerKey || '?'}</td>
+                  </tr>`;
+                }).join('')}</tbody>
+              </table>
+            </td>
+          </tr>`;
+        }).join('')}</tbody>
       </table>
     </div>
   `;
