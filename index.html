@@ -623,6 +623,18 @@ const FINAL_STANDINGS = {
   2025:{champion:'Goodmjim', order:['Goodmjim','boonefisher','KennethGoulet','amol97','CarlCanary','bukkaabh','JohnCarey','karpmcol','tlynn99','Dfletch22','DHalp','kellykyl']}
 };
 
+// Individual season awards — hand-curated, matching the FINAL_STANDINGS pattern.
+// Winner names get resolved to Sleeper player IDs lazily via resolveIndividualAwardPids()
+// (below, near the player-card helpers) so they're clickable and show up on player cards.
+const INDIVIDUAL_AWARDS = {
+  2020:{mvp:'Nikola Jokic', finalsMvp:'Nikola Jokic', roty:'LaMelo Ball'},
+  2021:{mvp:'Giannis Antetokounmpo', finalsMvp:'Nikola Jokic', roty:'Evan Mobley'},
+  2022:{mvp:'Nikola Jokic', finalsMvp:'Jayson Tatum', roty:'Paolo Banchero'},
+  2023:{mvp:'Luka Doncic', finalsMvp:'Jalen Brunson', roty:'Victor Wembanyama'},
+  2024:{mvp:'Nikola Jokic', finalsMvp:'Stephen Curry', roty:'Zach Edey'},
+  2025:{mvp:'Nikola Jokic', finalsMvp:'James Harden', roty:'Cooper Flagg'}
+};
+
 /* ============================================================
    POTG / POTW
    Computed ON DEMAND from season.matchupsByWeek, mirroring the football archive's
@@ -4120,12 +4132,98 @@ function renderAwardsPanel(){
   renderAwardsFor(year); // load immediately, no click required
 }
 
+function renderIndividualAwardCard(icon, title, pid, winnerNameFallback, year){
+  const name = pid ? ((DB.playerMeta[pid]||{}).name || winnerNameFallback) : winnerNameFallback;
+  return `<div class="card" style="display:flex;align-items:center;gap:14px;">
+    <div style="font-size:28px;flex-shrink:0;line-height:1;">${icon}</div>
+    <div>
+      <div style="font-weight:700;font-size:14px;margin-bottom:2px;">${title}</div>
+      <div style="color:var(--gold);font-weight:600;">${pid ? `<span class="player-link" onclick="openPlayerModal('${pid}');return false;">${name}</span>` : name}</div>
+      <div style="color:var(--text-faint);font-size:11.5px;margin-top:1px;">${seasonLabel(year)}</div>
+    </div>
+  </div>`;
+}
+
+function computeAllDocileAppearances(){
+  const agg = {};
+  Object.entries(DB.awards.allDocile).forEach(([yr, teams]) => {
+    [1,2,3].forEach(tier => {
+      const roster = (teams && teams[tier]) || [];
+      roster.forEach(r => {
+        if(!r.pid) return;
+        if(!agg[r.pid]) agg[r.pid] = {first:0, second:0, third:0};
+        if(tier===1) agg[r.pid].first++;
+        else if(tier===2) agg[r.pid].second++;
+        else agg[r.pid].third++;
+      });
+    });
+  });
+  return Object.entries(agg).map(([pid,d]) => ({pid, ...d, total: d.first+d.second+d.third}));
+}
+
+let docileAppearancesSort = {col:'total', dir:-1};
+function sortDocileAppearances(col){
+  docileAppearancesSort = docileAppearancesSort.col === col ? {col, dir: docileAppearancesSort.dir * -1} : {col, dir:-1};
+  renderDocileAppearancesTable();
+}
+
+function renderDocileAppearancesTable(){
+  const body = document.getElementById('docile-appearances-body');
+  if(!body) return;
+  const rows = computeAllDocileAppearances();
+  const dir = docileAppearancesSort.dir;
+  const sf = {
+    first:(a,b)=>(a.first-b.first)*dir, second:(a,b)=>(a.second-b.second)*dir,
+    third:(a,b)=>(a.third-b.third)*dir, total:(a,b)=>(a.total-b.total)*dir
+  };
+  rows.sort((a,b) => (sf[docileAppearancesSort.col] || sf.total)(a,b) || (b.total-a.total));
+
+  body.innerHTML = rows.slice(0,50).map((r,i) => `<tr>
+    <td style="color:var(--text-faint);">${i+1}</td>
+    <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${(DB.playerMeta[r.pid]||{}).name || r.pid}</span></td>
+    <td style="text-align:right;font-family:var(--font-mono);">${r.first || '—'}</td>
+    <td style="text-align:right;font-family:var(--font-mono);">${r.second || '—'}</td>
+    <td style="text-align:right;font-family:var(--font-mono);">${r.third || '—'}</td>
+    <td style="text-align:right;font-family:var(--font-mono);color:var(--gold);font-weight:700;">${r.total}</td>
+  </tr>`).join('');
+}
+
 function renderAwardsFor(year){
   const el = document.getElementById('awards-detail');
   const docile = DB.awards.allDocile[year];
   const rookie = DB.awards.allRookie[year];
   if(!docile){ el.innerHTML = `<div class="empty-state"><i class="ti ti-medal"></i>No honors data built for ${seasonLabel(year)} yet.</div>`; return; }
+
+  const indiv = resolveIndividualAwardPids();
+  const yearAwards = INDIVIDUAL_AWARDS[year];
+
   el.innerHTML = `
+    ${yearAwards ? `
+    <h3 style="margin-bottom:14px;">Awards &amp; Honors — ${seasonLabel(year)}</h3>
+    <div class="card-grid" style="margin-bottom:28px;">
+      ${renderIndividualAwardCard('\u{1F451}', 'Docile League MVP', indiv.mvp[year], yearAwards.mvp, year)}
+      ${renderIndividualAwardCard('\u{1F3C5}', 'Docile Finals MVP', indiv.finalsMvp[year], yearAwards.finalsMvp, year)}
+      ${renderIndividualAwardCard('\u{1F37C}', 'Rookie of the Year', indiv.roty[year], yearAwards.roty, year)}
+    </div>` : ''}
+
+    <h3 style="margin-bottom:4px;">All-Docile Appearances Leaderboard</h3>
+    <div style="color:var(--text-faint);font-size:12px;font-style:italic;margin-bottom:12px;">1st, 2nd, and 3rd team selections across all seasons</div>
+    <div class="card" style="margin-bottom:28px;padding:6px 4px;">
+      <div style="overflow-x:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th style="cursor:default;width:24px;"></th>
+            <th style="cursor:default;">Player</th>
+            <th onclick="sortDocileAppearances('first')" style="text-align:right;">\u{1F947} 1st</th>
+            <th onclick="sortDocileAppearances('second')" style="text-align:right;">\u{1F948} 2nd</th>
+            <th onclick="sortDocileAppearances('third')" style="text-align:right;">\u{1F949} 3rd</th>
+            <th onclick="sortDocileAppearances('total')" style="text-align:right;">Total ${docileAppearancesSort.col==='total'?(docileAppearancesSort.dir===-1?'↓':'↑'):''}</th>
+          </tr></thead>
+          <tbody id="docile-appearances-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <h3 style="margin-bottom:14px;">All-Docile — ${seasonLabel(year)}</h3>
     <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:28px;">
       ${[1,2,3].map(t => `<div class="card"><h4 style="margin-bottom:10px;">${t===1?'1st':t===2?'2nd':'3rd'} Team</h4>${renderHonorsRoster(docile[t], year)}</div>`).join('')}
@@ -4133,6 +4231,7 @@ function renderAwardsFor(year){
     <h3 style="margin-bottom:14px;">All-Rookie Team — ${seasonLabel(year)}</h3>
     <div class="card">${renderRookieRoster((rookie && rookie[1]) || [])}</div>
   `;
+  renderDocileAppearancesTable();
 }
 
 /* ============================================================
@@ -4545,6 +4644,22 @@ function getPlayerAcquisition(pid){
   return null;
 }
 
+// Resolves INDIVIDUAL_AWARDS' hand-typed winner names to Sleeper player IDs, once,
+// via the same fuzzy player-name lookup used for draft-pick matching. Cached after
+// first call since DB.playerMeta doesn't change after load.
+let _individualAwardPidsCache = null;
+function resolveIndividualAwardPids(){
+  if(_individualAwardPidsCache) return _individualAwardPidsCache;
+  const result = {mvp:{}, finalsMvp:{}, roty:{}};
+  Object.entries(INDIVIDUAL_AWARDS).forEach(([yr, a]) => {
+    result.mvp[yr] = lookupPid(a.mvp);
+    result.finalsMvp[yr] = lookupPid(a.finalsMvp);
+    result.roty[yr] = lookupPid(a.roty);
+  });
+  _individualAwardPidsCache = result;
+  return result;
+}
+
 function computePlayerAwards(pid){
   const awards = [];
 
@@ -4560,6 +4675,15 @@ function computePlayerAwards(pid){
     if(started) champYears.push(seasonLabel(year));
   });
   if(champYears.length) awards.push({emoji: '\u{1F3C6}'.repeat(champYears.length), line:`Docile Champion (${champYears.join(', ')})`}); // 🏆
+
+  // Individual awards — 👑 MVP, 🏅 Finals MVP, 🍼 ROTY, repeated per occurrence with years
+  const indiv = resolveIndividualAwardPids();
+  const mvpYrs = Object.entries(indiv.mvp).filter(([,p]) => p === pid).map(([yr]) => seasonLabel(Number(yr)));
+  if(mvpYrs.length) awards.push({emoji: '\u{1F451}'.repeat(mvpYrs.length), line:`Docile League MVP (${mvpYrs.join(', ')})`});
+  const finalsMvpYrs = Object.entries(indiv.finalsMvp).filter(([,p]) => p === pid).map(([yr]) => seasonLabel(Number(yr)));
+  if(finalsMvpYrs.length) awards.push({emoji: '\u{1F3C5}'.repeat(finalsMvpYrs.length), line:`Docile Finals MVP (${finalsMvpYrs.join(', ')})`});
+  const rotyYrs = Object.entries(indiv.roty).filter(([,p]) => p === pid).map(([yr]) => seasonLabel(Number(yr)));
+  if(rotyYrs.length) awards.push({emoji: '\u{1F37C}'.repeat(rotyYrs.length), line:`Rookie of the Year (${rotyYrs.join(', ')})`});
 
   // All-Docile tiers — medal emoji repeated per occurrence, with the actual years won
   const tierEmoji = {1:'\u{1F947}', 2:'\u{1F948}', 3:'\u{1F949}'}; // 🥇🥈🥉
