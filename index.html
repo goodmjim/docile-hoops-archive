@@ -1122,6 +1122,18 @@ function applySnapshot(snap, year){
       playoffWeekStart: snap.playoffWeekStart || null,
       matchupsByWeek: snap.matchupsByWeek || {}
     };
+  } else {
+    // loadAllSeasons() always runs first (live) and already creates a season shell
+    // with teams/rosters — but matchupsByWeek is only ever populated by the live
+    // scoring fetch, which snapshot-first mode intentionally skips. Without this,
+    // every page that reads raw matchup pairs (H2H, Recap, Matchups, POTG,
+    // Projections, Standings deltas) silently gets nothing for this season.
+    if(!DB.seasons[year].matchupsByWeek || !Object.keys(DB.seasons[year].matchupsByWeek).length){
+      DB.seasons[year].matchupsByWeek = snap.matchupsByWeek || {};
+    }
+    if(!DB.seasons[year].playoffWeekStart){
+      DB.seasons[year].playoffWeekStart = snap.playoffWeekStart || null;
+    }
   }
   if(!DB.playoffMatchupsByWeek[year] || !Object.keys(DB.playoffMatchupsByWeek[year]).length){
     DB.playoffMatchupsByWeek[year] = snap.playoffMatchupsByWeek || {};
