@@ -235,6 +235,8 @@ button{font-family:inherit;cursor:pointer;}
   font-size:14px;
 }
 .sb-btn:hover{color:var(--text);border-color:var(--text-faint);}
+.sb-btn:disabled{opacity:.35;cursor:default;}
+.sb-btn:disabled:hover{color:var(--text-faint);border-color:var(--border);}
 
 /* --- Main content --- */
 #main{flex:1;min-width:0;display:flex;flex-direction:column;}
@@ -2039,23 +2041,32 @@ function computeAllTimeRankDeltas(){
   if(latestYear===null) return {deltas:{}, latestYear:null, latestWeek:null};
 
   const beforeTotals = {}, afterTotals = {};
+  const hadStartsBefore = new Set();
   DB.allStarters.forEach(s => {
     afterTotals[s.pid] = (afterTotals[s.pid]||0) + (s.points||0);
-    if(!(s.year===latestYear && s.week===latestWeek)) beforeTotals[s.pid] = (beforeTotals[s.pid]||0) + (s.points||0);
+    if(!(s.year===latestYear && s.week===latestWeek)){
+      beforeTotals[s.pid] = (beforeTotals[s.pid]||0) + (s.points||0);
+      hadStartsBefore.add(s.pid);
+    }
   });
   const beforeRank = Object.entries(beforeTotals).sort((a,b)=>b[1]-a[1]).map(([pid])=>pid);
   const afterRank = Object.entries(afterTotals).sort((a,b)=>b[1]-a[1]).map(([pid])=>pid);
   const beforeIdx = {}; beforeRank.forEach((pid,i) => beforeIdx[pid]=i+1);
   const afterIdx = {}; afterRank.forEach((pid,i) => afterIdx[pid]=i+1);
 
+  // A player with zero starts before the latest loaded week debuted THIS week —
+  // ranking them against a "before" position they never had produces a misleading
+  // huge fake rise, so they're flagged 'NEW' instead of getting a numeric delta.
   const deltas = {};
-  afterRank.forEach(pid => { deltas[pid] = (beforeIdx[pid] || (beforeRank.length+1)) - afterIdx[pid]; });
+  afterRank.forEach(pid => {
+    deltas[pid] = hadStartsBefore.has(pid) ? (beforeIdx[pid] - afterIdx[pid]) : 'NEW';
+  });
   return {deltas, latestYear, latestWeek};
 }
 
 function computeRisersFallers(){
   const {deltas, latestYear, latestWeek} = computeAllTimeRankDeltas();
-  const entries = Object.entries(deltas).map(([pid, delta]) => ({pid, delta}));
+  const entries = Object.entries(deltas).filter(([,d]) => d !== 'NEW').map(([pid, delta]) => ({pid, delta}));
   if(!entries.length) return {};
   const riser = [...entries].sort((a,b) => b.delta - a.delta)[0];
   const faller = [...entries].sort((a,b) => a.delta - b.delta)[0];
@@ -2064,6 +2075,7 @@ function computeRisersFallers(){
 
 // Shared cell renderer for the "vs last week" rank-change column in Player Scoring tables.
 function renderRankDeltaCell(delta){
+  if(delta === 'NEW') return `<span style="color:var(--accent);font-weight:700;white-space:nowrap;">NEW</span>`;
   if(delta === undefined || delta === null) return '<span style="color:var(--text-faint);">—</span>';
   if(delta > 0) return `<span style="color:var(--good);white-space:nowrap;"><i class="ti ti-arrow-up"></i> ${delta}</span>`;
   if(delta < 0) return `<span style="color:var(--bad);white-space:nowrap;"><i class="ti ti-arrow-down"></i> ${Math.abs(delta)}</span>`;
@@ -2911,22 +2923,30 @@ function renderStandingsTableBody(){
    scoring — same constraint as everywhere else in the app.
    ============================================================ */
 let playersSort = {col:'total', dir:-1};
+let playersPage = 1;
+const PLAYERS_PAGE_SIZE = 50;
 
 function sortPlayersTable(col){
   playersSort = playersSort.col === col ? {col, dir: playersSort.dir * -1} : {col, dir:-1};
+  playersPage = 1;
   renderPlayersTableBody();
 }
 
 function renderPlayersPanel(){
   const el = document.getElementById('playerscoring-body');
   el.innerHTML = `
-    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:center;">
       <input id="players-search" type="text" placeholder="Search players..."
         style="flex:1;min-width:180px;padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
       <select id="players-pos-filter" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;">
         <option value="all">All positions</option>
         ${TRUE_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}
       </select>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
+        <button id="players-prev-page" class="sb-btn" title="Previous page"><i class="ti ti-chevron-left"></i></button>
+        <span id="players-page-indicator" style="font-size:12.5px;color:var(--text-dim);white-space:nowrap;min-width:80px;text-align:center;">Page 1</span>
+        <button id="players-next-page" class="sb-btn" title="Next page"><i class="ti ti-chevron-right"></i></button>
+      </div>
     </div>
     <div id="players-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
     <div id="players-mgr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
@@ -2956,6 +2976,7 @@ function renderPlayersPanel(){
   chipsEl.querySelectorAll('.yr-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       DB.selectedPlayersYear = chip.dataset.year === 'all' ? 'all' : Number(chip.dataset.year);
+      playersPage = 1;
       renderPlayersPanel();
     });
   });
@@ -2968,12 +2989,19 @@ function renderPlayersPanel(){
   mgrChipsEl.querySelectorAll('.yr-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       DB.selectedPlayersManager = chip.dataset.mgr === 'all' ? 'all' : chip.dataset.mgr;
+      playersPage = 1;
       renderPlayersPanel();
     });
   });
 
-  document.getElementById('players-search').addEventListener('input', renderPlayersTableBody);
-  document.getElementById('players-pos-filter').addEventListener('change', renderPlayersTableBody);
+  document.getElementById('players-search').addEventListener('input', () => { playersPage = 1; renderPlayersTableBody(); });
+  document.getElementById('players-pos-filter').addEventListener('change', () => { playersPage = 1; renderPlayersTableBody(); });
+  document.getElementById('players-prev-page').addEventListener('click', () => {
+    if(playersPage > 1){ playersPage--; renderPlayersTableBody(); }
+  });
+  document.getElementById('players-next-page').addEventListener('click', () => {
+    playersPage++; renderPlayersTableBody(); // clamped inside renderPlayersTableBody
+  });
 
   renderPlayersTableBody();
 }
@@ -3017,10 +3045,30 @@ function renderPlayersTableBody(){
 
   const {deltas} = computeAllTimeRankDeltas();
 
-  if(!rows.length){ body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`; return; }
+  if(!rows.length){
+    body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`;
+    const indicator = document.getElementById('players-page-indicator');
+    if(indicator) indicator.textContent = 'Page 0 of 0';
+    const prevBtn = document.getElementById('players-prev-page'), nextBtn = document.getElementById('players-next-page');
+    if(prevBtn) prevBtn.disabled = true;
+    if(nextBtn) nextBtn.disabled = true;
+    return;
+  }
 
-  body.innerHTML = rows.slice(0,200).map((r,i) => `<tr>
-    <td style="color:var(--text-faint);">${i+1}</td>
+  const totalPages = Math.max(1, Math.ceil(rows.length / PLAYERS_PAGE_SIZE));
+  if(playersPage > totalPages) playersPage = totalPages;
+  if(playersPage < 1) playersPage = 1;
+  const startIdx = (playersPage - 1) * PLAYERS_PAGE_SIZE;
+  const pageRows = rows.slice(startIdx, startIdx + PLAYERS_PAGE_SIZE);
+
+  const indicator = document.getElementById('players-page-indicator');
+  if(indicator) indicator.textContent = `Page ${playersPage} of ${totalPages}`;
+  const prevBtn = document.getElementById('players-prev-page'), nextBtn = document.getElementById('players-next-page');
+  if(prevBtn) prevBtn.disabled = playersPage <= 1;
+  if(nextBtn) nextBtn.disabled = playersPage >= totalPages;
+
+  body.innerHTML = pageRows.map((r,i) => `<tr>
+    <td style="color:var(--text-faint);">${startIdx + i + 1}</td>
     <td><span class="player-link" onclick="openPlayerModal('${r.pid}');return false;">${r.name}</span></td>
     <td>${renderPositionBadge(r.positions)}</td>
     <td style="color:var(--text-dim);font-size:12px;">${r.teamAbbr}</td>
