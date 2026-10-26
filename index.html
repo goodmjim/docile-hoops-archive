@@ -516,7 +516,7 @@ const CLAUDE_WORKER_URL = 'https://docile-league-claude.jimmygoodman52.workers.d
    ============================================================ */
 const LEAGUE_NAME = 'Docile Basketball Fellowship';
 const FIRST_SEASON = 2020;
-const CURRENT_SEASON = 2026; // pre-draft as of build time
+const CURRENT_SEASON = 2026; // in-progress season (2026-27): loaded live from Sleeper, never snapshotted
 
 function seasonLabel(year){ return `${year}-${String(year+1).slice(2)}`; } // 2020 -> "2020-21"
 
@@ -1523,15 +1523,23 @@ async function loadSeasonScoring(year){
       : Promise.resolve(weeks.map(w => ({w, s:{}})))
   ]);
 
+  // In-progress season: Sleeper pre-populates future weeks with zeroed matchups. Keep only
+  // weeks where somebody has actually scored, so unplayed weeks never show as 0-point games.
+  let playedMatchups = matchupResults;
+  if(year >= CURRENT_SEASON){
+    playedMatchups = matchupResults.filter(({mu}) => (mu||[]).some(e =>
+      (e.points || 0) !== 0 || Object.values(e.players_points || {}).some(v => v)));
+  }
+
   const statByWeek = {};
   statResults.forEach(({w,s}) => { statByWeek[w] = s; });
   const projByWeek = {};
   projResults.forEach(({w,s}) => { projByWeek[w] = s; });
-  matchupResults.forEach(({w,mu}) => { season.matchupsByWeek[w] = mu; });
+  playedMatchups.forEach(({w,mu}) => { season.matchupsByWeek[w] = mu; });
 
   const scoring = season.league.scoring_settings || {};
 
-  matchupResults.forEach(({w,mu}) => {
+  playedMatchups.forEach(({w,mu}) => {
     mu.forEach(entry => {
       const managerKey = season.rosterIdToManagerKey[entry.roster_id];
       const team = season.teams.find(t => t.rosterId === entry.roster_id);
@@ -1941,7 +1949,7 @@ function destroyAllCharts(){
 
 function renderAll(){
   destroyAllCharts();
-  DB.selectedSeason = DB.selectedSeason || (CURRENT_SEASON - 1); // default to latest completed season
+  DB.selectedSeason = DB.selectedSeason || getLatestSeasonYear(); // latest season with data
   renderContentShell();
   renderSidebarNav();
   renderBottomNav();
@@ -1963,6 +1971,14 @@ function renderSnapshotScopeSelect(){
 // Prefers the current season if it actually has matchup data loaded; otherwise
 // falls back to the most recently completed season. Drives every "current" framing
 // on the Dashboard now that the season-toggle chips are gone.
+// Latest season that actually has scored weeks (the in-progress season once week 1 has
+// scores, otherwise the most recently completed one).
+function getLatestSeasonYear(){
+  const cur = DB.seasons && DB.seasons[CURRENT_SEASON];
+  if(cur && Object.keys(cur.matchupsByWeek||{}).length) return CURRENT_SEASON;
+  return CURRENT_SEASON - 1;
+}
+
 function getActiveSeasonYear(){
   const curSeason = DB.seasons[DB.currentSeason];
   if(curSeason && Object.keys(curSeason.matchupsByWeek||{}).length) return DB.currentSeason;
@@ -2027,22 +2043,32 @@ function renderMarqueeMatchup(){
 // spots their ALL-TIME career-scoring rank moved due to the most recently loaded week's
 // games (positive = moved up). Shared by the Dashboard's Riser/Faller boxes and the
 // Player Scoring tables' week-over-week rank-change column.
-function computeAllTimeRankDeltas(){
-  let latestYear = null, latestWeek = null;
+// Every (year, week) that has loaded matchup data, newest first.
+function getLoadedWeeks(){
+  const out = [];
   Object.entries(DB.seasons).forEach(([yearStr, season]) => {
-    const year = Number(yearStr);
-    Object.keys(season.matchupsByWeek||{}).forEach(wStr => {
-      const week = Number(wStr);
-      if(latestYear===null || year>latestYear || (year===latestYear && week>latestWeek)){
-        latestYear = year; latestWeek = week;
-      }
-    });
+    Object.keys(season.matchupsByWeek||{}).forEach(wStr => out.push({year:Number(yearStr), week:Number(wStr)}));
   });
+  return out.sort((a,b) => b.year-a.year || b.week-a.week);
+}
+
+// Optional `asOf` = {year, week}: compute the table as of that week (ignores anything
+// played later) instead of the latest loaded week. Used by the Player Scoring week picker.
+function computeAllTimeRankDeltas(asOf){
+  const weeks = getLoadedWeeks();
+  let latestYear = null, latestWeek = null;
+  if(asOf && weeks.some(w => w.year===asOf.year && w.week===asOf.week)){
+    latestYear = asOf.year; latestWeek = asOf.week;
+  } else if(weeks.length){
+    latestYear = weeks[0].year; latestWeek = weeks[0].week;
+  }
   if(latestYear===null) return {deltas:{}, latestYear:null, latestWeek:null};
+  const cutoff = latestYear*1000 + latestWeek;
 
   const beforeTotals = {}, afterTotals = {};
   const hadStartsBefore = new Set();
   DB.allStarters.forEach(s => {
+    if(s.year*1000 + s.week > cutoff) return;
     afterTotals[s.pid] = (afterTotals[s.pid]||0) + (s.points||0);
     if(!(s.year===latestYear && s.week===latestWeek)){
       beforeTotals[s.pid] = (beforeTotals[s.pid]||0) + (s.points||0);
@@ -2942,6 +2968,7 @@ function renderPlayersPanel(){
         <option value="all">All positions</option>
         ${TRUE_POSITIONS.map(p => `<option value="${p}">${p}</option>`).join('')}
       </select>
+      <select id="players-week-sel" title="View the leaderboard as of a specific week" style="padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-panel);color:var(--text);font-size:13px;"></select>
       <div style="display:flex;align-items:center;gap:8px;margin-left:auto;">
         <button id="players-prev-page" class="sb-btn" title="Previous page"><i class="ti ti-chevron-left"></i></button>
         <span id="players-page-indicator" style="font-size:12.5px;color:var(--text-dim);white-space:nowrap;min-width:80px;text-align:center;">Page 1</span>
@@ -2961,7 +2988,7 @@ function renderPlayersPanel(){
           <th onclick="sortPlayersTable('starts')" class="${playersSort.col==='starts'?'sorted':''}">Starts <span class="sort-arrow">${playersSort.col==='starts'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
           <th onclick="sortPlayersTable('avg')" class="${playersSort.col==='avg'?'sorted':''}">Avg <span class="sort-arrow">${playersSort.col==='avg'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
           <th onclick="sortPlayersTable('best')" class="${playersSort.col==='best'?'sorted':''}">Best <span class="sort-arrow">${playersSort.col==='best'?(playersSort.dir===-1?'↓':'↑'):''}</span></th>
-          <th style="cursor:default;" title="All-time career rank change vs. the most recently loaded week">vs Last Wk</th>
+          <th style="cursor:default;" title="All-time career rank change vs. the week before the selected week">vs Prev Wk</th>
         </tr></thead>
         <tbody id="players-table-body"></tbody>
       </table>
@@ -2994,6 +3021,19 @@ function renderPlayersPanel(){
     });
   });
 
+  const weekSel = document.getElementById('players-week-sel');
+  const loadedWeeks = getLoadedWeeks();
+  const curWeek = DB.selectedPlayersWeek || 'latest';
+  weekSel.innerHTML = `<option value="latest">Latest week${loadedWeeks.length ? ` (${seasonLabel(loadedWeeks[0].year)} Wk ${loadedWeeks[0].week})` : ''}</option>` +
+    loadedWeeks.map(w => `<option value="${w.year}-${w.week}">${seasonLabel(w.year)} \u00b7 Week ${w.week}</option>`).join('');
+  weekSel.value = curWeek;
+  if(weekSel.value !== curWeek) weekSel.value = 'latest';
+  weekSel.addEventListener('change', () => {
+    DB.selectedPlayersWeek = weekSel.value;
+    playersPage = 1;
+    renderPlayersTableBody();
+  });
+
   document.getElementById('players-search').addEventListener('input', () => { playersPage = 1; renderPlayersTableBody(); });
   document.getElementById('players-pos-filter').addEventListener('change', () => { playersPage = 1; renderPlayersTableBody(); });
   document.getElementById('players-prev-page').addEventListener('click', () => {
@@ -3014,7 +3054,16 @@ function renderPlayersTableBody(){
   const selected = DB.selectedPlayersYear || 'all';
   const selectedMgr = DB.selectedPlayersManager || 'all';
 
-  let starters = selected === 'all' ? DB.allStarters : DB.allStarters.filter(s => s.year === selected);
+  // Week picker: everything is "as of" the chosen week (later weeks ignored); the
+  // vs-prev-week column compares that week against the one before it.
+  const wk = DB.selectedPlayersWeek || 'latest';
+  let asOf = null;
+  if(wk !== 'latest'){ const [wy, ww] = wk.split('-').map(Number); asOf = {year:wy, week:ww}; }
+  const rank = computeAllTimeRankDeltas(asOf);
+  const cutoff = rank.latestYear === null ? Infinity : rank.latestYear*1000 + rank.latestWeek;
+
+  let starters = DB.allStarters.filter(s => s.year*1000 + s.week <= cutoff);
+  if(selected !== 'all') starters = starters.filter(s => s.year === selected);
   if(selectedMgr !== 'all') starters = starters.filter(s => s.managerKey === selectedMgr);
 
   const agg = {};
@@ -3043,7 +3092,7 @@ function renderPlayersTableBody(){
   };
   rows.sort(sf[playersSort.col] || sf.total);
 
-  const {deltas} = computeAllTimeRankDeltas();
+  const deltas = rank.deltas;
 
   if(!rows.length){
     body.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-faint);padding:24px;">No players found.</td></tr>`;
@@ -3381,7 +3430,7 @@ function renderPlayoffsPanel(){
     <div id="playoffs-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
     <div id="playoffs-detail"></div>
   `;
-  const defaultYear = DB.selectedSeason || (CURRENT_SEASON - 1);
+  const defaultYear = DB.selectedSeason || getLatestSeasonYear();
   renderYearChips('playoffs-yr-chips', (y)=>{ renderPlayoffsFor(y); }, defaultYear);
   renderPlayoffsFor(defaultYear);
 }
@@ -4088,7 +4137,7 @@ function sortDraftTable(col){
 
 function renderDraft(){
   const el = document.getElementById('draft-body');
-  currentDraftYear = DB.selectedSeason || (CURRENT_SEASON - 1);
+  currentDraftYear = DB.selectedSeason || getLatestSeasonYear();
   el.innerHTML = `
     <div class="card" style="margin-bottom:24px;">
       <div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
@@ -4185,7 +4234,7 @@ function renderRookieRoster(roster){
 
 function renderAwardsPanel(){
   const el = document.getElementById('awards-body');
-  const year = DB.selectedSeason || (CURRENT_SEASON - 1);
+  const year = DB.selectedSeason || getLatestSeasonYear();
   el.innerHTML = `
     <div id="awards-yr-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;"></div>
     <div id="awards-detail"></div>
@@ -4360,9 +4409,9 @@ function renderPotgPanel(){
       </table>
     </div>
   `;
-  renderYearChips('potg-log-yr-chips', (y) => renderPotgLog(y), DB.selectedSeason || (CURRENT_SEASON - 1));
+  renderYearChips('potg-log-yr-chips', (y) => renderPotgLog(y), DB.selectedSeason || getLatestSeasonYear());
   renderPotgLeaderboard();
-  renderPotgLog(DB.selectedSeason || (CURRENT_SEASON - 1));
+  renderPotgLog(DB.selectedSeason || getLatestSeasonYear());
 }
 
 function renderPotgLeaderboard(){
@@ -5069,7 +5118,9 @@ async function loadAllData(onProgress = () => {}){
   onProgress(10, 'Loading season data…');
   await loadAllSeasons();
 
-  const years = Object.keys(LEAGUE_IDS).map(Number).filter(y => y < CURRENT_SEASON);
+  const allYears = Object.keys(LEAGUE_IDS).map(Number).sort((a,b)=>a-b);
+  const years = allYears.filter(y => y < CURRENT_SEASON);       // completed: snapshot-eligible
+  const liveYears = allYears.filter(y => y >= CURRENT_SEASON);  // in progress: always live
 
   // Phase 1: check for GitHub snapshot backups before hitting Sleeper at all.
   onProgress(20, 'Checking backups…');
@@ -5108,6 +5159,18 @@ async function loadAllData(onProgress = () => {}){
       }
     }
     buildHonorsForYear(y);
+  }
+
+  // In-progress season(s): always pulled live (a snapshot would freeze a partial season).
+  // No honors/playoffs yet — those only exist once the season is complete.
+  for(const y of liveYears){
+    onProgress(96, `Loading ${seasonLabel(y)} (in progress)…`);
+    try{
+      await loadSeasonScoring(y);
+      await loadTransactions(y);
+    }catch(e){
+      console.warn(`[Archive] Live load failed for ${seasonLabel(y)}:`, e.message);
+    }
   }
   onProgress(100, '');
 }
