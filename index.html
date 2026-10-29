@@ -3614,7 +3614,7 @@ function renderMatchupsGrid(){
         const [a,b] = pair;
         const ka = season.rosterIdToManagerKey[a.roster_id], kb = season.rosterIdToManagerKey[b.roster_id];
         if(mgrF !== 'all' && ka !== mgrF && kb !== mgrF) return;
-        cards.push({year, week:Number(w), ka, kb, sa:getTeamComputedTotal(a), sb:getTeamComputedTotal(b)});
+        cards.push({year, week:Number(w), ka, kb, ra:a.roster_id, rb:b.roster_id, sa:getTeamComputedTotal(a), sb:getTeamComputedTotal(b)});
       });
     });
   });
@@ -3624,7 +3624,7 @@ function renderMatchupsGrid(){
 
   grid.innerHTML = cards.slice(0,150).map(c => {
     const aWin = c.sa >= c.sb;
-    return `<div class="card">
+    return `<div class="card" style="cursor:pointer;" title="Click for lineup breakdown" onclick="openLineupModal(${c.year},${c.week},${c.ra},${c.rb})">
       <div style="color:var(--text-faint);font-size:11px;margin-bottom:8px;">${seasonLabel(c.year)} \u00b7 Week ${c.week}${isProvisionalWeek(c.year,c.week) ? ' <span style="color:var(--accent);font-weight:700;margin-left:4px;" title="Sleeper may not yet reflect locked-in games">PROVISIONAL</span>' : ''}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <div style="${aWin?'font-weight:700;':''}">
@@ -4932,6 +4932,41 @@ function toggleGameLog(rowId, chevronId){
   const isHidden = row.style.display === 'none';
   row.style.display = isHidden ? 'table-row' : 'none';
   if(chevron) chevron.style.transform = isHidden ? 'rotate(90deg)' : 'rotate(0deg)';
+}
+
+// Shows exactly what Sleeper returned for both lineups in a matchup: each starter's
+// points, the sum, and Sleeper's own `points` / `custom_points` fields side by side.
+// Handy for checking the archive against the Sleeper app.
+function openLineupModal(year, week, ra, rb){
+  const season = DB.seasons[year];
+  const mus = (season && season.matchupsByWeek[week]) || [];
+  const overlay = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+  const side = rid => {
+    const e = mus.find(m => m.roster_id === rid);
+    if(!e) return '';
+    const key = season.rosterIdToManagerKey[rid];
+    const name = (getManager(key)||{}).name || key;
+    const starters = (e.starters||[]);
+    const rows = starters.map((pid,i) => {
+      const meta = DB.playerMeta[pid] || {};
+      const pts = e.players_points ? e.players_points[pid] : undefined;
+      const sp = (e.starters_points||[])[i];
+      return `<tr><td>${pid && pid !== '0' ? (meta.name || 'Player ' + pid) : '(empty)'}</td>
+        <td style="text-align:right;font-family:var(--font-mono);">${pts === undefined ? '\u2014' : pts.toFixed(1)}</td>
+        <td style="text-align:right;font-family:var(--font-mono);color:var(--text-faint);">${sp === undefined || sp === null ? '\u2014' : Number(sp).toFixed(1)}</td></tr>`;
+    }).join('');
+    return `<div style="flex:1;min-width:260px;">
+      <h4 style="margin-bottom:6px;">${name} <span style="font-family:var(--font-mono);">${getTeamComputedTotal(e).toFixed(1)}</span></h4>
+      <table class="data-table" style="font-size:12px;"><thead><tr><th>Starter</th><th style="text-align:right;">players_pts</th><th style="text-align:right;">starters_pts</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="color:var(--text-faint);font-size:11px;margin-top:6px;">Sleeper <code>points</code>: ${e.points ?? '\u2014'} \u00b7 <code>custom_points</code>: ${e.custom_points ?? 'null'}</div>
+    </div>`;
+  };
+  content.innerHTML = `
+    <h3 style="margin-bottom:4px;">${seasonLabel(year)} \u00b7 Week ${week} lineups</h3>
+    <div style="color:var(--text-faint);font-size:11.5px;margin-bottom:12px;">Raw values as Sleeper's API returned them${DB.liveFetchedAt && year >= CURRENT_SEASON ? ` (fetched ${DB.liveFetchedAt.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})})` : ''}.</div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;">${side(ra)}${side(rb)}</div>`;
+  overlay.classList.add('active');
 }
 
 function openPlayerModal(pid){
