@@ -678,7 +678,7 @@ function provisionalNoticeHTML(){
   const label = pw.map(w => `${seasonLabel(w.year)} Week ${w.week}`).join(', ');
   return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:14px;padding:9px 12px;border-radius:var(--radius-md);border:1px solid var(--border);background:var(--bg-hover);color:var(--text-dim);font-size:12px;line-height:1.45;">
     <i class="ti ti-clock-exclamation" style="color:var(--accent);font-size:15px;margin-top:1px;"></i>
-    <div><b style="color:var(--text);">${label} is provisional.</b> Sleeper can report a different game than the one locked in until the week settles, so some scores and team totals may be off. POTG/POTW wait until the week is final.</div>
+    <div><b style="color:var(--text);">${label} is provisional.</b>${DB.liveFetchedAt ? ` <span style="color:var(--text-faint);">(data fetched ${DB.liveFetchedAt.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'})})</span>` : ''} Sleeper can report a different game than the one locked in until the week settles, so some scores and team totals may be off. POTG/POTW wait until the week is final.</div>
   </div>`;
 }
 
@@ -1112,7 +1112,12 @@ function generateInsights(){
    ============================================================ */
 async function apiFetch(path){
   const url = `${CF_WORKER_URL}${path.startsWith('/')?path:'/'+path}`;
-  const res = await fetch(url);
+  // The in-progress season changes constantly: never let the browser reuse a cached
+  // copy of its league data, so a normal load and a hard refresh always agree.
+  const live = Object.entries(LEAGUE_IDS).some(([y,id]) => Number(y) >= CURRENT_SEASON && path.includes(id))
+            || path.includes(`/nba/regular/${CURRENT_SEASON}/`);
+  const res = await fetch(url, live ? {cache:'no-store'} : undefined);
+  if(live) DB.liveFetchedAt = new Date();
   if(!res.ok) throw new Error(`apiFetch failed [${res.status}] ${path}`);
   return res.json();
 }
